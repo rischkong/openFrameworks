@@ -1,11 +1,12 @@
 #include "ofImage.h"
 #include "ofAppRunner.h"
 #include "ofPixels.h"
+#include "ofFileUtils.h"
 
-#include "FreeImage.h"
+#include <FreeImage.h>
 
 #include "ofURLFileLoader.h"
-#include "uriparser/Uri.h"
+#include <uriparser/Uri.h>
 
 #if defined(TARGET_ANDROID)
 #include "ofxAndroidUtils.h"
@@ -196,21 +197,23 @@ static int getJpegOptionFromImageLoadSetting(const ofImageLoadSettings &settings
 }
 
 template<typename PixelType>
-static bool loadImage(ofPixels_<PixelType> & pix, const of::filesystem::path& _fileName, const ofImageLoadSettings& settings){
+static bool loadImage(ofPixels_<PixelType> & pix, const of::filesystem::path & _fileName, const ofImageLoadSettings & settings){
 	ofInitFreeImage();
 
-	auto uriStr = _fileName.string();
+	auto uriStr = ofPathToString(_fileName);
+	auto fileNameString = ofPathToString(_fileName);
 	UriUriA uri;
 	UriParserStateA state;
 	state.uri = &uri;
+	auto uriChar = uriStr.c_str();
 
-	if(uriParseUriA(&state, uriStr.c_str())!=URI_SUCCESS){
-		const int bytesNeeded = 8 + 3 * strlen(uriStr.c_str()) + 1;
+	if(uriParseUriA(&state, uriChar)!=URI_SUCCESS){
+		const int bytesNeeded = 8 + 3 * strlen(uriChar) + 1;
 		std::vector<char> absUri(bytesNeeded);
 	#ifdef TARGET_WIN32
-		uriWindowsFilenameToUriStringA(uriStr.c_str(), absUri.data());
+		uriWindowsFilenameToUriStringA(uriChar, absUri.data());
 	#else
-		uriUnixFilenameToUriStringA(uriStr.c_str(), absUri.data());
+		uriUnixFilenameToUriStringA(uriChar, absUri.data());
 	#endif
 		if(uriParseUriA(&state, absUri.data())!=URI_SUCCESS){
 			ofLogError("ofImage") << "loadImage(): malformed uri when loading image from uri " << _fileName;
@@ -222,31 +225,71 @@ static bool loadImage(ofPixels_<PixelType> & pix, const of::filesystem::path& _f
 	uriFreeUriMembersA(&uri);
 
 	if(scheme == "http" || scheme == "https"){
-		return ofLoadImage(pix, ofLoadURL(_fileName.string()).data);
+		return ofLoadImage(pix, ofLoadURL(ofPathToString(_fileName)).data);
 	}
 
-	auto fileName = ofToDataPath(_fileName, true);
+
+	ofFile file(_fileName);
+	if (!file.exists()) {
+		ofLogError("loadImage") << "File not found: " << _fileName;
+		return false;
+	}
+
+	std::uint64_t fileSize = file.getSize();
+	if (fileSize == 0) {
+		ofLogError("loadImage") << "File is empty: " << _fileName;
+		return false;
+	}
+	
 	bool bLoaded = false;
 	FIBITMAP * bmp = nullptr;
 
+	try {
 	FREE_IMAGE_FORMAT fif = FIF_UNKNOWN;
-	fif = FreeImage_GetFileType(fileName.c_str(), 0);
+#ifdef OF_OS_WINDOWS
+	fif = FreeImage_GetFileTypeU(_fileName.c_str(), 0);
+#else
+	fif = FreeImage_GetFileType(_fileName.c_str(), 0);
+#endif
 	if(fif == FIF_UNKNOWN) {
 		// or guess via filename
-		fif = FreeImage_GetFIFFromFilename(fileName.c_str());
+#ifdef OF_OS_WINDOWS
+		fif = FreeImage_GetFIFFromFilenameU(_fileName.c_str());
+#else
+		fif = FreeImage_GetFIFFromFilename(_fileName.c_str());
+#endif
 	}
 	if((fif != FIF_UNKNOWN) && FreeImage_FIFSupportsReading(fif)) {
+		int option = 0;
 		if(fif == FIF_JPEG) {
-			int option = getJpegOptionFromImageLoadSetting(settings);
-			bmp = FreeImage_Load(fif, fileName.c_str(), option | settings.freeImageFlags);
-		} else {
-			bmp = FreeImage_Load(fif, fileName.c_str(), 0 | settings.freeImageFlags);
+			option = getJpegOptionFromImageLoadSetting(settings);
 		}
+		if (!FreeImage_FIFSupportsReading(fif)) {
+			std::cerr << "Error: FreeImage does not support reading this format." << std::endl;
+		}
+		auto fileName = ofToDataPathFS(_fileName);
+
+
+#ifdef OF_OS_WINDOWS
+		bmp = FreeImage_LoadU(fif, fileName.c_str(), option | settings.freeImageFlags);
+#else
+		bmp = FreeImage_Load(fif, fileName.c_str(), option | settings.freeImageFlags);
+#endif
 
 		if (bmp != nullptr){
 			bLoaded = true;
 		}
 	}
+
+	}
+catch (const std::exception & e) {
+	std::cerr << "Exception caught in FreeImage_Load: " << e.what() << std::endl;
+	return false;
+}
+catch (...) {
+	std::cerr << "Unknown exception caught in FreeImage_Load." << std::endl;
+	return false;
+}
 
 	//-----------------------------
 
@@ -284,12 +327,11 @@ static bool loadImage(ofPixels_<PixelType> & pix, const ofBuffer & buffer, const
 
 
 	//make the image!!
+	int option = 0;
 	if(fif == FIF_JPEG) {
-		int option = getJpegOptionFromImageLoadSetting(settings);
-		bmp = FreeImage_LoadFromMemory(fif, hmem, option | settings.freeImageFlags);
-	} else {
-		bmp = FreeImage_LoadFromMemory(fif, hmem, settings.freeImageFlags);
+		option = getJpegOptionFromImageLoadSetting(settings);
 	}
+	bmp = FreeImage_LoadFromMemory(fif, hmem, option | settings.freeImageFlags);
 
 	if( bmp != nullptr ){
 		bLoaded = true;
@@ -313,44 +355,45 @@ static bool loadImage(ofPixels_<PixelType> & pix, const ofBuffer & buffer, const
 }
 
 //----------------------------------------------------------------
-bool ofLoadImage(ofPixels & pix, const of::filesystem::path& path, const ofImageLoadSettings &settings) {
+bool ofLoadImage(ofPixels & pix, const of::filesystem::path & path, const ofImageLoadSettings & settings) {
 	return loadImage(pix, path, settings);
 }
 
 //----------------------------------------------------------------
-bool ofLoadImage(ofPixels & pix, const ofBuffer & buffer, const ofImageLoadSettings &settings) {
+bool ofLoadImage(ofPixels & pix, const ofBuffer & buffer, const ofImageLoadSettings & settings) {
 	return loadImage(pix, buffer, settings);
 }
 
 //----------------------------------------------------------------
-bool ofLoadImage(ofShortPixels & pix, const of::filesystem::path& path, const ofImageLoadSettings &settings) {
+bool ofLoadImage(ofShortPixels & pix, const of::filesystem::path & path, const ofImageLoadSettings & settings) {
 	return loadImage(pix, path, settings);
 }
 
 //----------------------------------------------------------------
-bool ofLoadImage(ofShortPixels & pix, const ofBuffer & buffer, const ofImageLoadSettings &settings) {
+bool ofLoadImage(ofShortPixels & pix, const ofBuffer & buffer, const ofImageLoadSettings & settings) {
 	return loadImage(pix, buffer, settings);
 }
 
 //----------------------------------------------------------------
-bool ofLoadImage(ofFloatPixels & pix, const of::filesystem::path& path, const ofImageLoadSettings &settings) {
+bool ofLoadImage(ofFloatPixels & pix, const of::filesystem::path & path, const ofImageLoadSettings & settings) {
 	return loadImage(pix, path, settings);
 }
 
 //----------------------------------------------------------------
-bool ofLoadImage(ofFloatPixels & pix, const ofBuffer & buffer, const ofImageLoadSettings &settings) {
+bool ofLoadImage(ofFloatPixels & pix, const ofBuffer & buffer, const ofImageLoadSettings & settings) {
 	return loadImage(pix, buffer, settings);
 }
 
 //----------------------------------------------------------------
-bool ofLoadImage(ofTexture & tex, const of::filesystem::path& path, const ofImageLoadSettings &settings ) {
+bool ofLoadImage(ofTexture & tex, const of::filesystem::path & path, const ofImageLoadSettings & settings ) {
 	return ofLoadImage( tex, path, false, settings );
 }
 
 //----------------------------------------------------------------
 bool ofLoadImage(ofTexture & tex, const of::filesystem::path& path, bool bFlipInY, const ofImageLoadSettings &settings){
 	bool loaded = false;
-	std::string ext = ofToLower(path.extension().string());
+	auto ext = ofGetExtensionLower(path);
+
 	bool hdr = (ext == ".hdr" || ext == ".exr");
 	if( hdr ) {
 		ofFloatPixels pixels;
@@ -396,7 +439,7 @@ bool ofLoadImage(ofTexture & tex, const ofBuffer & buffer, const ofImageLoadSett
 
 //----------------------------------------------------------------
 template<typename PixelType>
-static bool saveImage(const ofPixels_<PixelType> & _pix, const of::filesystem::path& _fileName, ofImageQualityType qualityLevel) {
+static bool saveImage(const ofPixels_<PixelType> & _pix, const of::filesystem::path & _fileName, ofImageQualityType qualityLevel) {
 	ofInitFreeImage();
 	if (_pix.isAllocated() == false){
 		ofLogError("ofImage") << "saveImage(): couldn't save " << _fileName << ", pixels are not allocated";
@@ -404,12 +447,20 @@ static bool saveImage(const ofPixels_<PixelType> & _pix, const of::filesystem::p
 	}
 
 	ofFilePath::createEnclosingDirectory(_fileName);
-	auto fileName = ofToDataPath(_fileName);
+	auto fileName = ofToDataPathFS(_fileName);
 	FREE_IMAGE_FORMAT fif = FIF_UNKNOWN;
+#ifdef OF_OS_WINDOWS
+	fif = FreeImage_GetFileTypeU(fileName.c_str(), 0);
+#else
 	fif = FreeImage_GetFileType(fileName.c_str(), 0);
+#endif
 	if(fif == FIF_UNKNOWN) {
 		// or guess via filename
-		fif = FreeImage_GetFIFFromFilename(fileName.c_str());
+#ifdef OF_OS_WINDOWS
+		fif = FreeImage_GetFIFFromFilenameU(_fileName.extension().c_str());
+#else
+		fif = FreeImage_GetFIFFromFilename(_fileName.extension().c_str());
+#endif
 	}
 	if(fif==FIF_JPEG && (_pix.getNumChannels()==4 || _pix.getBitsPerChannel() > 8)){
 		ofPixels pix3 = _pix;
@@ -417,7 +468,7 @@ static bool saveImage(const ofPixels_<PixelType> & _pix, const of::filesystem::p
             pix3.swapRgb();
         }
 		pix3.setNumChannels(3);
-		return saveImage(pix3,_fileName,qualityLevel);
+		return saveImage(pix3, _fileName, qualityLevel);
 	}
 
 	FIBITMAP * bmp = nullptr;
@@ -447,11 +498,15 @@ static bool saveImage(const ofPixels_<PixelType> & _pix, const of::filesystem::p
 				case OF_IMAGE_QUALITY_HIGH: quality = JPEG_QUALITYGOOD; break;
 				case OF_IMAGE_QUALITY_BEST: quality = JPEG_QUALITYSUPERB; break;
 			}
+#ifdef OF_OS_WINDOWS
+			retValue = FreeImage_SaveU(fif, bmp, fileName.c_str(), quality);
+#else
 			retValue = FreeImage_Save(fif, bmp, fileName.c_str(), quality);
+#endif
 		} else {
 			if(qualityLevel != OF_IMAGE_QUALITY_BEST) {
 				ofLogWarning("ofImage") << "saveImage(): ofImageCompressionType only applies to JPEGs,"
-					<< " ignoring value for \" "<< fileName << "\"";
+					<< " ignoring value for "<< _fileName;
 			}
 
 			if (fif == FIF_GIF) {
@@ -463,12 +518,20 @@ static bool saveImage(const ofPixels_<PixelType> & _pix, const of::filesystem::p
 					// this will create a 256-color palette from the image
 					convertedBmp = FreeImage_ColorQuantize(bmp, FIQ_NNQUANT);
 				}
+#ifdef OF_OS_WINDOWS
+				retValue = FreeImage_SaveU(fif, convertedBmp, fileName.c_str());
+#else
 				retValue = FreeImage_Save(fif, convertedBmp, fileName.c_str());
+#endif
 				if (convertedBmp != nullptr){
 					FreeImage_Unload(convertedBmp);
 				}
 			} else {
+#ifdef OF_OS_WINDOWS
+				retValue = FreeImage_SaveU(fif, bmp, fileName.c_str());
+#else
 				retValue = FreeImage_Save(fif, bmp, fileName.c_str());
+#endif
 			}
 		}
 	}
@@ -503,7 +566,7 @@ static bool saveImage(const ofPixels_<PixelType> & _pix, ofBuffer & buffer, ofIm
 	ofInitFreeImage();
 
 	if (_pix.isAllocated() == false){
-		ofLogError("ofImage","saveImage(): couldn't save to ofBuffer, pixels are not allocated");
+		ofLogError("ofImage") << "saveImage(): couldn't save to ofBuffer, pixels are not allocated";
 		return false;
 	}
 
@@ -746,14 +809,14 @@ bool ofImage_<PixelType>::loadImage(const ofFile & file){
 
 //----------------------------------------------------------
 template<typename PixelType>
-bool ofImage_<PixelType>::load(const of::filesystem::path& fileName, const ofImageLoadSettings &settings){
+bool ofImage_<PixelType>::load(const of::filesystem::path & fileName, const ofImageLoadSettings & settings){
 	#if defined(TARGET_ANDROID)
 	ofAddListener(ofxAndroidEvents().unloadGL,this,&ofImage_<PixelType>::unloadTexture);
 	ofAddListener(ofxAndroidEvents().reloadGL,this,&ofImage_<PixelType>::update);
 	#endif
 	bool bLoadedOk = ofLoadImage(pixels, fileName, settings);
 	if (!bLoadedOk) {
-		ofLogError("ofImage") << "loadImage(): couldn't load image from " << fileName << "";
+		ofLogError("ofImage") << "loadImage(): couldn't load image from " << fileName;
 		clear();
 		return false;
 	}
@@ -763,7 +826,7 @@ bool ofImage_<PixelType>::load(const of::filesystem::path& fileName, const ofIma
 
 //----------------------------------------------------------
 template<typename PixelType>
-bool ofImage_<PixelType>::loadImage(const std::string& fileName){
+bool ofImage_<PixelType>::loadImage(const of::filesystem::path & fileName){
 	return load(fileName);
 }
 
@@ -804,7 +867,7 @@ bool ofImage_<PixelType>::save(ofBuffer & buffer, ofImageFormat imageFormat, ofI
 
 //----------------------------------------------------------
 template<typename PixelType>
-void ofImage_<PixelType>::saveImage(const std::string& fileName, ofImageQualityType qualityLevel) const {
+void ofImage_<PixelType>::saveImage(const of::filesystem::path & fileName, ofImageQualityType qualityLevel) const {
 	save(fileName, qualityLevel);
 }
 

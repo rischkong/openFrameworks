@@ -4,7 +4,8 @@
 //
 //  Created by Dan Rosser on 7/3/18.
 //
-
+#include "ofxiOSConstants.h"
+#if defined(OF_UI_KIT) && defined(OF_GL_KIT) && defined(TARGET_OF_IOS)
 #include "ofxiOSGLKView.h"
 #include "ofxiOSApp.h"
 #include "ofAppiOSWindow.h"
@@ -98,7 +99,10 @@ static ofxiOSGLKView * _instanceRef = nil;
 
         window = dynamic_pointer_cast<ofAppiOSWindow>(ofCreateWindow(windowSettings));
 
-        ofRunApp(app);
+        // UIKit already owns the application loop when a custom app delegate
+        // installs this view. Register the app with the recreated window
+        // without starting the main loop again.
+        ofRunApp(window, std::static_pointer_cast<ofBaseApp>(app));
     }
     
     if(window->isProgrammableRenderer() == true) {
@@ -401,3 +405,4 @@ static ofxiOSGLKView * _instanceRef = nil;
 
 
 @end
+#endif

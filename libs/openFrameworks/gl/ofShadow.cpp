@@ -1,43 +1,60 @@
-//
-//  ofShadow.cpp
-//  openFrameworksLib
-//
-//  Created by Nick Hardeman on 10/3/22.
-//
-
 #include "ofShadow.h"
 #include "of3dUtils.h"
 #include "ofGLBaseTypes.h"
 #include "ofGLUtils.h"
 #include "ofLight.h"
 #include "ofGLProgrammableRenderer.h"
+// MARK: ofConstants Targets
 #include "ofConstants.h"
+#include "ofMaterial.h"
 
-#define GLM_FORCE_CTOR_INIT
-#include "glm/gtx/transform.hpp"
-#include "glm/gtc/quaternion.hpp"
+#if !defined(GLM_FORCE_CTOR_INIT)
+	#define GLM_FORCE_CTOR_INIT
+#endif
+#if !defined(GLM_ENABLE_EXPERIMENTAL)
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
+#include <glm/gtx/transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 using std::weak_ptr;
 using std::vector;
 using std::shared_ptr;
 
+struct ofShadowGLData {
+	GLuint fboId = 0;
+	GLuint texId = 0;
+	bool bAllocated = false;
+	bool bFboAllocated = false;
+	
+#if defined(TARGET_OPENGLES)
+	int width = 512;
+	int height = 512;
+#else
+	int width = 1024;
+	int height = 1024;
+#endif
+	
+	int totalShadows = 0;
+};
+
 
 //----------------------------------------
-vector<weak_ptr<ofShadow::Data> > & ofShadowsData(){
-	static vector<weak_ptr<ofShadow::Data> > * shadowsActive = ofIsGLProgrammableRenderer()?new vector<weak_ptr<ofShadow::Data> >:new vector<weak_ptr<ofShadow::Data> >(8);
+vector<weak_ptr<ofShadow::Data> > & ofShadow::getShadowsData(){
+	static vector<weak_ptr<ofShadow::Data> > * shadowsActive = ofIsGLProgrammableRenderer() ? new vector<weak_ptr<ofShadow::Data> > : new vector<weak_ptr<ofShadow::Data> >(8);
 	return *shadowsActive;
 }
 
 //--------------------------------------------------------------
-static std::map< int, ofShadow::GLData > & getGLDatas(){
-	static std::map< int,ofShadow::GLData > * idsFB = new std::map< int,ofShadow::GLData >;
+static std::map< int, ofShadowGLData > & getGLDatas(){
+	static std::map< int,ofShadowGLData > * idsFB = new std::map< int,ofShadowGLData >;
 	return *idsFB;
 }
 
 //--------------------------------------------------------------
-static ofShadow::GLData& getGLData( int aLightType ) {
+static ofShadowGLData& getGLData( int aLightType ) {
 	if( getGLDatas().count(aLightType) < 1 ) {
-		getGLDatas()[aLightType] = ofShadow::GLData();
+		getGLDatas()[aLightType] = ofShadowGLData();
 	}
 	return getGLDatas()[aLightType];
 }
@@ -194,8 +211,8 @@ std::string ofShadow::getShadowTypeAsString( ofShadowType atype ) {
 
 //--------------------------------------------------------------
 bool ofShadow::hasActiveShadows() {
-	for(size_t i=0;i< ofShadowsData().size();i++){
-		std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		auto shadow = getShadowsData()[i].lock();
 		if(shadow && shadow->isEnabled && shadow->index > -1 ){
 			return true;
 			break;
@@ -211,8 +228,8 @@ void ofShadow::enableAllShadows() {
 		return;
 	}
 	
-	for(size_t i=0;i<ofShadowsData().size();i++){
-		std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		auto shadow = getShadowsData()[i].lock();
 		if(!shadow || shadow->index < 0 ){
 			continue;
 		}
@@ -222,8 +239,8 @@ void ofShadow::enableAllShadows() {
 
 //--------------------------------------------------------------
 void ofShadow::disableAllShadows() {
-	for(size_t i=0;i<ofShadowsData().size();i++){
-		std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		auto shadow = getShadowsData()[i].lock();
 		if(!shadow || shadow->index < 0 ){
 			continue;
 		}
@@ -237,8 +254,8 @@ void ofShadow::setAllShadowTypes( ofShadowType atype ) {
 		ofLogWarning("ofShadow :: setAllShadowTypes : only works with programmable renderer.");
 		return;
 	}
-	for(size_t i=0;i<ofShadowsData().size();i++){
-		std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		auto shadow = getShadowsData()[i].lock();
 		if(!shadow || shadow->index < 0 ){
 			continue;
 		}
@@ -264,8 +281,8 @@ void ofShadow::setAllShadowBias( float bias ) {
 		ofLogWarning("ofShadow :: setAllShadowBias : only works with programmable renderer.");
 		return;
 	}
-	for(size_t i=0;i<ofShadowsData().size();i++){
-		std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		auto shadow = getShadowsData()[i].lock();
 		if(!shadow || shadow->index < 0 ){
 			continue;
 		}
@@ -279,8 +296,8 @@ void ofShadow::setAllShadowNormalBias( float normalBias ) {
 		ofLogWarning("ofShadow :: setAllShadowNormalBias : only works with programmable renderer.");
 		return;
 	}
-	for(size_t i=0;i<ofShadowsData().size();i++){
-		std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		auto shadow = getShadowsData()[i].lock();
 		if(!shadow || shadow->index < 0 ){
 			continue;
 		}
@@ -294,8 +311,8 @@ void ofShadow::setAllShadowSampleRadius( float sampleRadius ) {
 		ofLogWarning("ofShadow :: enableAllShadows : only works with programmable renderer.");
 		return;
 	}
-	for(size_t i=0;i<ofShadowsData().size();i++){
-		std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		auto shadow = getShadowsData()[i].lock();
 		if(!shadow || shadow->index < 0 ){
 			continue;
 		}
@@ -307,7 +324,7 @@ void ofShadow::setAllShadowSampleRadius( float sampleRadius ) {
 std::string ofShadow::getShaderDefinesAsString() {
 	std::string definesString = "";
 	if( areShadowsSupported() ) {
-		if( ofShadowsData().size() > 0 && ofLightsData().size() > 0) {
+		if( getShadowsData().size() > 0 && ofLightsData().size() > 0) {
 			definesString += "#define HAS_SHADOWS 1\n";
 		}
 		
@@ -324,22 +341,19 @@ std::string ofShadow::getShaderDefinesAsString() {
 
 //--------------------------------------------------------------
 bool ofShadow::areShadowsSupported() {
-	#if defined(TARGET_OPENGLES) && !defined(TARGET_EMSCRIPTEN)
-	return false;
+	#if defined(TARGET_OPENGLES) && !(defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
+	return false;   // GLES 2.0 does not support shadows
 	#endif
-	
-	if(!ofIsGLProgrammableRenderer() ) {
-		return false;
-	}
-	return true;
+
+	return ofIsGLProgrammableRenderer();
 }
 
 //--------------------------------------------------------------
 void ofShadow::_updateTexDataIds() {
 	std::map<int, int> texIdMap;
 	
-	for(size_t i=0;i< ofShadowsData().size();i++){
-		std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		auto shadow = getShadowsData()[i].lock();
 		if(!shadow || !shadow->isEnabled || shadow->index < 0 ){
 			continue;
 		}
@@ -532,7 +546,7 @@ bool ofShadow::beginDepth() {
 	
 	glRenderer->bind(*this);
 	
-	if( isGlCullingEnabled() ) {
+	if( isCullingEnabled() ) {
 		glEnable(GL_CULL_FACE); // enables face culling
 		glFrontFace(mGlFrontFaceWindingOrder);
 		glCullFace(GL_FRONT); // tells OpenGL to cull front faces
@@ -545,7 +559,7 @@ bool ofShadow::endDepth() {
 	if( !getIsEnabled() || !areShadowsSupported() ) {
 		return false;
 	}
-	if( isGlCullingEnabled() ) {
+	if( isCullingEnabled() ) {
 		glDisable(GL_CULL_FACE);
 	}
 	
@@ -611,7 +625,7 @@ bool ofShadow::beginDepth(GLenum aCubeFace) {
 	
 	glRenderer->bind(*this,aCubeFace);
 		
-	if( isGlCullingEnabled() ) {
+	if( isCullingEnabled() ) {
 		glEnable(GL_CULL_FACE); // enables face culling
 		glFrontFace(mGlFrontFaceWindingOrder);
 		glCullFace(GL_FRONT); // tells OpenGL to cull back faces (the sane default setting)
@@ -647,7 +661,7 @@ void ofShadow::setEnabled( bool ab ) {
 }
 
 //--------------------------------------------------------------
-const bool ofShadow::isMultiCubeFacePass() const {
+bool ofShadow::isMultiCubeFacePass() const {
 	if( data->lightType == OF_LIGHT_POINT ) {
 		return !isSingleOmniPass();
 	}
@@ -655,12 +669,12 @@ const bool ofShadow::isMultiCubeFacePass() const {
 }
 
 //--------------------------------------------------------------
-const bool ofShadow::isSingleOmniPass() const {
+bool ofShadow::isSingleOmniPass() const {
 	return mBSinglePass;
 }
 
 //--------------------------------------------------------------
-const int ofShadow::getNumShadowDepthPasses() const {
+int ofShadow::getNumShadowDepthPasses() const {
 	if(isMultiCubeFacePass()) {
 		return 6;
 	}
@@ -848,10 +862,10 @@ std::vector<glm::vec3> ofShadow::getFrustumCorners( const glm::vec3& aup, const 
 		ratio = mAreaLightWidth / mAreaLightHeight;
 	}
 	
-	float Hnear = 2.f * tan( ofDegToRad( mFov ) / 2.f ) * getNearClip();
+	float Hnear = 2.f * std::tan( glm::radians( mFov ) / 2.f ) * getNearClip();
 	float Wnear = Hnear * ratio;
 	
-	float Hfar = 2.f * tanf( ofDegToRad( mFov ) / 2.f ) * getFarClip();
+	float Hfar = 2.f * std::tan( glm::radians( mFov ) / 2.f ) * getFarClip();
 	float Wfar = Hfar * ratio;
 	
 	std::vector<glm::vec3> corners(8);
@@ -936,18 +950,18 @@ void ofShadow::_checkSetup() {
 	if( data->index < 0 ) {
 		bool bShadowFound = false;
 		// search for the first free block
-		for(size_t i=0; i<ofShadowsData().size(); i++) {
-			if(ofShadowsData()[i].expired()) {
+		for(size_t i=0; i<getShadowsData().size(); i++) {
+			if(getShadowsData()[i].expired()) {
 				data->index = i;
 				data->isEnabled = false;
-				ofShadowsData()[i] = data;
+				getShadowsData()[i] = data;
 				bShadowFound = true;
 				break;
 			}
 		}
 		if(!bShadowFound && ofIsGLProgrammableRenderer()){
-			ofShadowsData().push_back(data);
-			data->index = ofShadowsData().size() - 1;
+			getShadowsData().push_back(data);
+			data->index = getShadowsData().size() - 1;
 			data->isEnabled = false;
 			bShadowFound = true;
 		}
@@ -970,15 +984,12 @@ void ofShadow::_allocateFbo() {
 	GLenum gl_read_status = GL_FRAMEBUFFER_UNSUPPORTED;
 	
 	GLenum textureTarget = getTextureTarget(data->lightType);
-#if !defined(TARGET_OPENGLES)
-	int depthComponent = GL_DEPTH_COMPONENT32F;
-	int glType = GL_FLOAT;
-#elif defined(TARGET_EMSCRIPTEN)
-	int depthComponent = GL_DEPTH_COMPONENT24;
-	int glType = GL_UNSIGNED_INT;
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
+	GLenum depthComponent = GL_DEPTH_COMPONENT32F;
+	GLenum glType = GL_FLOAT;
 #else
-	int depthComponent = GL_DEPTH_COMPONENT;
-	int glType = GL_UNSIGNED_SHORT;
+	GLenum depthComponent = GL_DEPTH_COMPONENT;
+	GLenum glType = GL_UNSIGNED_SHORT;
 #endif
 	
 	glBindTexture(textureTarget, getDepthMapTexId() );
@@ -1126,9 +1137,9 @@ void ofShadow::_updateNumShadows() {
 	getGLData(OF_LIGHT_SPOT).totalShadows = 0;
 	getGLData(OF_LIGHT_AREA).totalShadows = 0;
 	
-	for(size_t i=0; i < ofShadowsData().size(); i++){
-		if(!ofShadowsData()[i].expired()) {
-			auto shadow = ofShadowsData()[i].lock();
+	for(size_t i=0;i<getShadowsData().size();i++){
+		if(!getShadowsData()[i].expired()) {
+			auto shadow = getShadowsData()[i].lock();
 			if( shadow ) {
 				getGLData(shadow->lightType).totalShadows++;
 			}
@@ -1140,11 +1151,11 @@ void ofShadow::_updateNumShadows() {
 #include "shaders/shadowDepth.frag"
 #include "shaders/shadowDepthCubeGeom.glsl"
 
-const bool ofShadow::setupShadowDepthShader(ofShader& ashader, const std::string aShaderMain) const {
+bool ofShadow::setupShadowDepthShader(ofShader& ashader, const std::string aShaderMain) const {
 	return setupShadowDepthShader( ashader, data->lightType, aShaderMain, isSingleOmniPass() );
 }
 
-const bool ofShadow::setupShadowDepthShader(ofShader& ashader, int aLightType, const std::string aShaderMain, bool abSinglePass) const {
+bool ofShadow::setupShadowDepthShader(ofShader& ashader, int aLightType, const std::string aShaderMain, bool abSinglePass) const {
 	std::string gversion = "#version 150\n";
 	
 	#ifdef TARGET_OPENGLES

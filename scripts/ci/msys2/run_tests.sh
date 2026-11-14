@@ -1,18 +1,30 @@
 #!/bin/bash
-set -ev
+# set -ev
 ROOT=$(pwd -P)
-source $ROOT/scripts/ci/ccache.sh
 
-echo "**** Running unit tests ****"
+# fail the job when a build fails, with an error annotation naming what failed
+build_or_fail(){
+	if ! make "$@"; then
+		echo "::error title=Build failed::make $* failed in ${PWD#$ROOT/}"
+		exit 1
+	fi
+}
+# source $ROOT/scripts/ci/ccache.sh
+
+echo "##[group]**** Running unit tests ****"
 cd $ROOT/tests
 for group in *; do
+	case "$group" in
+		android|ios|tvOS|emscripten) continue ;;
+	esac
 	if [ -d $group ]; then
+		echo "##[group] $group"
 		for test in $group/*; do
 			if [ -d $test ]; then
 				cd $test
 				cp ../../../scripts/templates/msys2/Makefile .
 				cp ../../../scripts/templates/msys2/config.make .
-				make ${USE_CCACHE} -j2 Debug
+				build_or_fail -j2 Debug
 				cd bin
 				binname=$(basename ${test})
                 #gdb -batch -ex "run" -ex "bt" -ex "q \$_exitcode" ./${binname}_debug
@@ -24,5 +36,7 @@ for group in *; do
 				cd $ROOT/tests
 			fi
 		done
+		echo "##[endgroup]"
 	fi
 done
+echo "##[endgroup]"

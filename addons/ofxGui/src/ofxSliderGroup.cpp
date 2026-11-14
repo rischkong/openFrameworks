@@ -8,7 +8,7 @@ ofxVecSlider_<VecType>::ofxVecSlider_(ofParameter<VecType> value, float width, f
 
 template<class VecType>
 ofxVecSlider_<VecType> * ofxVecSlider_<VecType>::setup(ofParameter<VecType> value, float width, float height){
-    ofxGuiGroup::setup(value.getName(), "", 0, 0);
+    ofxGuiGroup::setup(value.getName(), {}, 0, 0);
     
     parameters.clear();
 	listeners.unsubscribeAll();
@@ -22,7 +22,7 @@ ofxVecSlider_<VecType> * ofxVecSlider_<VecType>::setup(ofParameter<VecType> valu
     VecType max = value.getMax();
 
 	for (size_t i = 0; i < dim(); i++) {
-    	ofParameter<float> p(names[i], val[i], min[i], max[i]);
+    	ofParameter<float> p(names[i], val[static_cast<int>(i)], min[static_cast<int>(i)], max[static_cast<int>(i)]);
 		add(createGuiElement<ofxSlider<float>>(p, width, height));
         listeners.push(p.newListener(this, & ofxVecSlider_::changeSlider));
     }
@@ -55,7 +55,7 @@ void ofxVecSlider_<VecType>::changeValue(VecType & value){
         return;
     }
 	for (size_t i = 0; i < dim(); i++){
-        parameters[i].template cast<float>() = value[i];
+        parameters[i].template cast<float>() = value[static_cast<int>(i)];
     }
 }
 
@@ -126,7 +126,7 @@ ofxColorSlider_<ColorType>::ofxColorSlider_(ofParameter<ofColor_<ColorType> > va
 
 template<class ColorType>
 ofxColorSlider_<ColorType> * ofxColorSlider_<ColorType>::setup(ofParameter<ofColor_<ColorType> > value, float width, float height){
-    ofxGuiGroup::setup(value.getName(), "", 0, 0);
+	ofxGuiGroup::setup(value.getName(), {}, 0, 0);
     parameters.clear();
 
 	const std::string names[4] = {"r", "g", "b", "a"};
@@ -257,7 +257,7 @@ ofxRectangleSlider::ofxRectangleSlider(ofParameter<ofRectangle> value, float wid
 
 
 ofxRectangleSlider * ofxRectangleSlider::setup(ofParameter<ofRectangle> value, float width, float height){
-    ofxGuiGroup::setup(value.getName(), "", 0, 0);
+    ofxGuiGroup::setup(value.getName(), {}, 0, 0);
     
     parameters.clear();
     

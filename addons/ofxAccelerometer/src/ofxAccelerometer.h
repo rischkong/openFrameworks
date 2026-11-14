@@ -34,6 +34,9 @@
 #include "ofTypes.h"
 #include "ofPoint.h"
 #include "ofEvents.h"
+#include "ofMathConstants.h"
+
+#include <cstring>
 
 typedef void (*ofxAccelCB)(ofPoint&);			// typedef for accelerometer callback
 
@@ -140,8 +143,8 @@ protected:
 		if(!orientDirty) return;
 		orientDirty = false;
 		
-		orientation.x = atan2(accelOrientation.y, -accelOrientation.z) * RAD_TO_DEG; 
-		orientation.y = atan2(accelOrientation.x, -accelOrientation.z) * RAD_TO_DEG;
+		orientation.x = glm::degrees( atan2(accelOrientation.y, -accelOrientation.z) );
+		orientation.y = glm::degrees( atan2(accelOrientation.x, -accelOrientation.z) );
 		orientation.z = 0;
 	}
 	
@@ -158,7 +161,7 @@ protected:
 		if(length < 0.1) return;
 		
 		//Clear matrix to be used to rotate from the current referential to one based on the gravity vector
-		bzero(matrix, sizeof(matrix));
+		memset(matrix, 0, sizeof(matrix));
 		matrix[3][3] = 1.0;
 		
 		//Setup first matrix column as gravity vector

@@ -2,13 +2,18 @@
 
 #include "ofMaterialBaseTypes.h"
 #include "ofShader.h"
-// FIXME: constants deprecated only and ctor
-#include "ofColor.h"
-#include "ofConstants.h"
 
-#include "glm/fwd.hpp"
-#include "glm/vec2.hpp"
-#include <map>
+#if !defined(GLM_FORCE_CTOR_INIT)
+	#define GLM_FORCE_CTOR_INIT
+#endif
+#if !defined(GLM_ENABLE_EXPERIMENTAL)
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
+#include <glm/fwd.hpp>
+#include <glm/vec2.hpp>
+#include <glm/mat4x4.hpp>
+
+#include <unordered_map>
 
 enum ofMaterialTextureType : short {
 	OF_MATERIAL_TEXTURE_NONE = 0,
@@ -182,7 +187,7 @@ public:
 
 	/// \brief is this material pbr. Setting PBR functions or textures will automatically set the material to pbr.\nCan also be set calling setPBR(bool);
 	/// \return is the material pbr.
-	const bool isPBR() const { return data.isPbr; }
+	bool isPBR() const { return data.isPbr; }
 	/// \brief enable or disable PBR for this material. Default is disabled.
 	void setPBR(bool ab);
 
@@ -345,11 +350,13 @@ public:
 	float getNormalGeomToNormalMapMix() const;
 
 	typedef ofMaterialSettings Data;
-	OF_DEPRECATED_MSG("Use getSettings() instead", Data getData() const);
+	[[deprecated("Use getSettings()")]]
+	Data getData() const;
 	ofMaterialSettings getSettings() const;
 
 	/// \brief set the material color properties data struct
-	OF_DEPRECATED_MSG("Use setup(settings) instead", void setData(const ofMaterial::Data & data));
+	[[deprecated("Use setup(settings)")]]
+	void setData(const ofMaterial::Data & data);
 
 	// documented in ofBaseMaterial
 	void begin() const;
@@ -399,7 +406,7 @@ private:
 	const std::string getDepthShaderStringId() const;
 	
 	void initDepthShaders(ofGLProgrammableRenderer& renderer) const;
-	const ofShader& getShadowDepthShader( const ofShadow& ashadow, ofGLProgrammableRenderer & renderer ) const;
+	const ofShader & getShadowDepthShader( const ofShadow& ashadow, ofGLProgrammableRenderer & renderer ) const;
 
 	void initShaders(ofGLProgrammableRenderer & renderer) const;
 	const ofShader & getShader(int textureTarget, bool geometryHasColor, ofGLProgrammableRenderer & renderer) const;

@@ -1,19 +1,19 @@
 #include "ofUtils.h"
-// FIXME: split ofUtils in two files, one which uses urlparser / ofImage, other without for smaller apps.
+// FIXME: split ofUtils in two files, one which uses urlparser, other without for smaller apps.
 #include "ofAppBaseWindow.h"
 #include "ofAppRunner.h"
 #include "ofEvents.h"
-#include "ofGLUtils.h"
-#include "ofImage.h"
 #include "ofLog.h"
 #include "ofMainLoop.h"
-#include "ofMath.h"
-#include "ofPixels.h"
 
 #include "uriparser/Uri.h"
 #include <chrono>
 #include <locale>
 #include <numeric>
+
+#ifndef TARGET_WIN32
+	#include <unistd.h>
+#endif
 
 #ifdef TARGET_WIN32 // For ofLaunchBrowser.
 	#include <shellapi.h>
@@ -42,7 +42,7 @@
 #endif
 
 #ifdef TARGET_OF_IOS
-	#include "ofxiOSExtras.h"
+//	#include "ofxiOSExtras.h"
 #endif
 
 #ifdef TARGET_ANDROID
@@ -240,55 +240,20 @@ bool ofTime::operator>=(const ofTime & other) const {
 
 //--------------------------------------
 uint64_t ofGetFixedStepForFps(double fps) {
-	return 1000000000 / fps;
+	return 1'000'000'000 / fps;
 }
 
-//--------------------------------------
-void ofSetTimeModeSystem() {
-	auto mainLoop = ofGetMainLoop();
-	if (!mainLoop) {
-		ofLogError("ofSetSystemTimeMode") << "ofMainLoop is not initialized yet, can't set time mode";
-		return;
-	}
-	auto window = mainLoop->getCurrentWindow();
-	if (!window) {
-		ofLogError("ofSetSystemTimeMode") << "No window setup yet can't set time mode";
-		return;
-	}
-	window->events().setTimeModeSystem();
-	of::priv::getClock().setTimeModeSystem();
+// ofGetTimeMode / ofSetTimeMode* are in ofAppRunner.cpp (they need the main loop),
+// so ofUtils doesn't pull the app / window code into tools that only use the utils
+namespace of {
+namespace priv {
+void setClockTimeModeSystem() {
+	getClock().setTimeModeSystem();
 }
-
-//--------------------------------------
-void ofSetTimeModeFixedRate(uint64_t stepNanos) {
-	auto mainLoop = ofGetMainLoop();
-	if (!mainLoop) {
-		ofLogError("ofSetSystemTimeMode") << "ofMainLoop is not initialized yet, can't set time mode";
-		return;
-	}
-	auto window = mainLoop->getCurrentWindow();
-	if (!window) {
-		ofLogError("ofSetSystemTimeMode") << "No window setup yet can't set time mode";
-		return;
-	}
-	window->events().setTimeModeFixedRate(stepNanos);
-	of::priv::getClock().setTimeModeFixedRate(stepNanos, *mainLoop);
+void setClockTimeModeFixedRate(uint64_t stepNanos, ofMainLoop & mainLoop) {
+	getClock().setTimeModeFixedRate(stepNanos, mainLoop);
 }
-
-//--------------------------------------
-void ofSetTimeModeFiltered(float alpha) {
-	auto mainLoop = ofGetMainLoop();
-	if (!mainLoop) {
-		ofLogError("ofSetSystemTimeMode") << "ofMainLoop is not initialized yet, can't set time mode";
-		return;
-	}
-	auto window = mainLoop->getCurrentWindow();
-	if (!window) {
-		ofLogError("ofSetSystemTimeMode") << "No window setup yet can't set time mode";
-		return;
-	}
-	window->events().setTimeModeFiltered(alpha);
-	of::priv::getClock().setTimeModeSystem();
+}
 }
 
 //--------------------------------------
@@ -769,6 +734,16 @@ static std::locale getLocale(const string & locale) {
 	} catch (...) {
 		ofLogWarning("ofUtils") << "Couldn't create locale " << locale << " using default, " << loc.name();
 	}
+	// default locale only maps ASCII case (e.g. LANG unset): use a UTF-8 one
+	if (locale.empty() && std::tolower<wchar_t>(L'\u00C9', loc) == L'\u00C9') {
+		for (const char * name : { "C.UTF-8", "C.utf8", "en_US.UTF-8" }) {
+			try {
+				loc = std::locale(name);
+				break;
+			} catch (...) {
+			}
+		}
+	}
 #endif
 	return loc;
 }
@@ -938,7 +913,7 @@ void ofLaunchBrowser(const string & url, bool uriEncodeQuery, std::string target
 #endif
 
 	auto uriStr = ofSanitizeURLString(url, uriEncodeQuery);
-	
+
 	if (uriStr) {
 #ifdef TARGET_WIN32
 		ShellExecuteA(nullptr, "open", uriStr.value().c_str(),
@@ -963,7 +938,7 @@ void ofLaunchBrowser(const string & url, bool uriEncodeQuery, std::string target
 #endif
 
 #ifdef TARGET_OF_IOS
-		ofxiOSLaunchBrowser(uriStr.value());
+//		ofxiOSLaunchBrowser(uriStr.value());
 #endif
 
 #ifdef TARGET_ANDROID
@@ -1010,42 +985,7 @@ std::string ofGetVersionPreRelease() {
 //---- new to 006
 //from the forums http://www.openframeworks.cc/forum/viewtopic.php?t=1413
 
-//--------------------------------------------------
-void ofSaveScreen(const string & filename) {
-	/*ofImage screen;
-   screen.allocate(ofGetWidth(), ofGetHeight(), OF_IMAGE_COLOR);
-   screen.grabScreen(0, 0, ofGetWidth(), ofGetHeight());
-   screen.save(filename);*/
-	ofPixels pixels;
-	ofGetGLRenderer()->saveFullViewport(pixels);
-	ofSaveImage(pixels, filename);
-}
-
-//--------------------------------------------------
-void ofSaveViewport(const string & filename) {
-	// because ofSaveScreen doesn't related to viewports
-	/*ofImage screen;
-	ofRectangle view = ofGetCurrentViewport();
-	screen.allocate(view.width, view.height, OF_IMAGE_COLOR);
-	screen.grabScreen(0, 0, view.width, view.height);
-	screen.save(filename);*/
-
-	ofPixels pixels;
-	ofGetGLRenderer()->saveFullViewport(pixels);
-	ofSaveImage(pixels, filename);
-}
-
-//--------------------------------------------------
-int saveImageCounter = 0;
-void ofSaveFrame(bool bUseViewport) {
-	string fileName = ofToString(saveImageCounter) + ".png";
-	if (bUseViewport) {
-		ofSaveViewport(fileName);
-	} else {
-		ofSaveScreen(fileName);
-	}
-	saveImageCounter++;
-}
+// ofSaveScreen / ofSaveViewport / ofSaveFrame are in ofGraphics.cpp (renderer + ofImage)
 
 //--------------------------------------------------
 string ofSystem(const string & command) {
@@ -1120,7 +1060,7 @@ std::string ofGetEnv(const std::string & var, const std::string defaultValue) {
 		return defaultValue;
 	}
 #else
-	auto value = getenv(var.c_str());
+	auto value = std::getenv(var.c_str());
 	if (value) {
 		return value;
 	} else {

@@ -25,20 +25,28 @@
 #   core source code.
 ##########################################################################################
 
-MINGW_PREFIX ?= /mingw32
-PLATFORM_CFLAGS += -std=gnu++17 -DUNICODE -D_UNICODE
+#MINGW_PREFIX ?= /mingw32
+MINGW_PREFIX ?= /mingw64
+PLATFORM_CXXFLAGS += -std=gnu++17
+PLATFORM_CFLAGS += -DUNICODE -D_UNICODE
 #PLATFORM_CFLAGS += -IC:/msys64/mingw32/include/gstreamer-1.0 -DOF_VIDEO_PLAYER_GSTREAMER
-ifdef USE_CCACHE
-	CC = ccache $(MINGW_PREFIX)/bin/gcc
-	CXX = ccache $(MINGW_PREFIX)/bin/g++
+
+# CLANG64 / CLANGARM64 ship clang + LLVM tools and no gcc/binutils
+ifneq ($(filter CLANG64 CLANGARM64,$(MSYSTEM)),)
+	CC = $(MINGW_PREFIX)/bin/clang
+	CXX = $(MINGW_PREFIX)/bin/clang++
+	PLATFORM_AR = $(firstword $(wildcard $(MINGW_PREFIX)/bin/llvm-ar.exe) $(MINGW_PREFIX)/bin/ar)
+	PLATFORM_RESOURCE_COMPILER = $(firstword $(wildcard $(MINGW_PREFIX)/bin/llvm-windres.exe) $(MINGW_PREFIX)/bin/windres)
 else
 	CC = $(MINGW_PREFIX)/bin/gcc
 	CXX = $(MINGW_PREFIX)/bin/g++
+	PLATFORM_AR = $(MINGW_PREFIX)/bin/ar
+	PLATFORM_RESOURCE_COMPILER = $(MINGW_PREFIX)/bin/windres
 endif
+
 FIND ?= /usr/bin/find
-PLATFORM_AR = $(MINGW_PREFIX)/bin/ar
-PLATFORM_LD = $(MINGW_PREFIX)/bin/ld
-PLATFORM_RESOURCE_COMPILER = $(MINGW_PREFIX)/bin/windres
+#PLATFORM_LD = $(MINGW_PREFIX)/bin/ld
+PLATFORM_LD = /usr/bin/lld
 PLATFORM_PKG_CONFIG = $(MINGW_PREFIX)/bin/pkgconf
 
 
@@ -128,13 +136,11 @@ PLATFORM_CFLAGS += -fexceptions
 #PLATFORM_LDFLAGS += -arch i386
 PLATFORM_LDFLAGS += -lpthread
 
+
 ifeq ($(findstring MINGW64,$(MSYSTEM)),MINGW64)
 	PLATFORM_LDFLAGS += -Wl,--disable-dynamicbase,--disable-high-entropy-va,--default-image-base-low
 endif
 
-ifndef DEBUG
-	PLATFORM_LDFLAGS += -mwindows
-endif
 ifeq ($(findstring OF_USING_STD_FS, $(PLATFORM_DEFINES)),OF_USING_STD_FS)
 	PLATFORM_LDFLAGS += -lstdc++fs
 endif
@@ -154,7 +160,7 @@ endif
 ##########################################################################################
 
 # RELEASE Debugging options (http://gcc.gnu.org/onlinedocs/gcc/Debugging-Options.html)
-PLATFORM_OPTIMIZATION_CFLAGS_RELEASE = -Os
+PLATFORM_OPTIMIZATION_CFLAGS_RELEASE = -O3
 
 # DEBUG Debugging options (http://gcc.gnu.org/onlinedocs/gcc/Debugging-Options.html)
 PLATFORM_OPTIMIZATION_CFLAGS_DEBUG = -g3 #-D_GLIBCXX_DEBUG
@@ -193,7 +199,6 @@ PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/FreeImage/%
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/glm/%
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/json/%
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openssl/%
-PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/boost/%
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/glfw/%
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/curl/%
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/pugixml/%
@@ -236,8 +241,10 @@ PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/utf8/%
 
 PLATFORM_LIBRARIES += ksuser opengl32 gdi32 msimg32 glu32 dsound winmm strmiids #dxguid
 PLATFORM_LIBRARIES += uuid ole32 oleaut32 setupapi wsock32 ws2_32 Iphlpapi Comdlg32
-PLATFORM_LIBRARIES += freeimage boost_filesystem-mt boost_system-mt
+PLATFORM_LIBRARIES += freeimage
 PLATFORM_LIBRARIES += mf mfplat mfuuid mfreadwrite
+# PLATFORM_LIBRARIES += glfw3
+
 #PLATFORM_LIBRARIES += gstapp-1.0 gstvideo-1.0 gstbase-1.0 gstreamer-1.0 gobject-2.0 glib-2.0 intl
 #PLATFORM_LIBRARIES += mf mfplat mfuuid d3d11 #xaudio2
 
@@ -251,7 +258,6 @@ PLATFORM_PKG_CONFIG_LIBRARIES += openssl
 PLATFORM_PKG_CONFIG_LIBRARIES += freetype2
 PLATFORM_PKG_CONFIG_LIBRARIES += glew
 PLATFORM_PKG_CONFIG_LIBRARIES += glfw3
-PLATFORM_PKG_CONFIG_LIBRARIES += glm
 #PLATFORM_PKG_CONFIG_LIBRARIES += gstreamer-1.0
 PLATFORM_PKG_CONFIG_LIBRARIES += libcurl
 PLATFORM_PKG_CONFIG_LIBRARIES += liburiparser
@@ -324,13 +330,13 @@ copy_dlls:
 	@echo "     copying dlls to bin"
 
 	@ntldd --recursive $(wildcard bin/$(APPNAME)*.exe) | sed -e 's:\\:/:g' | grep -F "$(MINGW_PREFIX)" | cut -d">" -f2 |cut -d" " -f2 >dlllist
-	
+
 	@while read -r dll; do \
 		test -e "$$dll" && cp "$$dll" ./bin; \
     done <dlllist
 	@echo "     `wc -l <dlllist` dlls copied"
 	@rm dlllist
-	
+
 afterplatform: $(TARGET_NAME)
 	-cp ${OF_LIBS_PATH}/*/lib/${PLATFORM_LIB_SUBPATH}/*.${SHARED_LIB_EXTENSION} bin/ ; true
 	@echo

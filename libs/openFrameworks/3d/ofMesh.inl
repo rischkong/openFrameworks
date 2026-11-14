@@ -4,11 +4,13 @@
 
 #include "ofAppRunner.h"
 #include "ofGraphicsBaseTypes.h"
+// it can be removed if other PR is merged #8178
 #include "ofVectorMath.h"
-#include "ofMath.h"
-#include "ofMathConstants.h"
 #include "ofLog.h"
 #include "ofColor.h"
+#include "ofUtils.h" // ofTo
+
+//#include <glm/gtx/vector_angle.hpp>
 
 #include <unordered_map>
 
@@ -1581,7 +1583,7 @@ void ofMesh_<V,N,C,T>::mergeDuplicateVertices() {
 		const auto & p = verts[ index ];
 
 		if( ptCreated[index] == false ){
-			oldIndexNewIndex[index] = newPoints.size();
+			oldIndexNewIndex[index] = static_cast<ofIndexType>(newPoints.size());
 			newPoints.push_back( p );
 			if(hasColors()) {
 				newColors.push_back(colors[index]);
@@ -1658,9 +1660,9 @@ const std::vector<ofMeshFace_<V,N,C,T>> & ofMesh_<V,N,C,T>::getUniqueFaces() con
 		bool bHasTexcoords  = hasTexCoords();
 
 		if( getMode() == OF_PRIMITIVE_TRIANGLES) {
-			for(std::size_t j = 0; j < indices.size(); j += 3) {
+			for(ofIndexType j = 0; j < indices.size(); j += 3) {
 				ofMeshFace_<V,N,C,T> & tri = faces[triindex];
-				for(std::size_t k = 0; k < 3; k++) {
+				for(ofIndexType k = 0; k < 3; k++) {
 					index = indices[j+k];
 					tri.setVertex( k, vertices[index] );
 					if(bHasNormals)
@@ -1751,7 +1753,7 @@ void ofMesh_<V,N,C,T>::setFromTriangles( const std::vector<ofMeshFace_<V,N,C,T>>
 
 	int i = 0;
 	for(it = tris.begin(); it != tris.end(); it++) {
-		for(std::size_t k = 0; k < 3; k++) {
+		for(ofIndexType k = 0; k < 3; k++) {
 			vertices[i] = it->getVertex(k);
 			if(it->hasTexcoords())
 				texCoords[i] = it->getTexCoord(k);
@@ -1784,9 +1786,11 @@ void ofMesh_<V,N,C,T>::smoothNormals( float angle ) {
 	if( getMode() == OF_PRIMITIVE_TRIANGLES) {
 		std::vector<ofMeshFace_<V,N,C,T>> triangles = getUniqueFaces();
 		std::vector<V> verts;
+		verts.reserve( triangles.size() * 3 );
+		
 		for(ofIndexType i = 0; i < triangles.size(); i++) {
 			for(ofIndexType j = 0; j < 3; j++) {
-				verts.push_back( triangles[i].getVertex(j) );
+				verts.emplace_back( triangles[i].getVertex(j) );
 			}
 		}
 
@@ -1813,20 +1817,21 @@ void ofMesh_<V,N,C,T>::smoothNormals( float angle ) {
 
 		//ofLogNotice("ofMesh") << "smoothNormals(): num verts = " << verts.size() << " tris size = " << triangles.size();
 
-		std::string xStr, yStr, zStr;
 
 		for(ofIndexType i = 0; i < verts.size(); i++ ) {
-			xStr = "x"+ofToString(verts[i].x==-0?0:verts[i].x);
-			yStr = "y"+ofToString(verts[i].y==-0?0:verts[i].y);
-			zStr = "z"+ofToString(verts[i].z==-0?0:verts[i].z);
-			std::string vstring = xStr+yStr+zStr;
+			std::string vstring {
+				"x"+ofToString(verts[i].x==-0?0:verts[i].x) +
+				"y"+ofToString(verts[i].y==-0?0:verts[i].y) +
+				"z"+ofToString(verts[i].z==-0?0:verts[i].z)
+			};
+			
 			if(vertHash.find(vstring) == vertHash.end()) {
 				for(ofIndexType j = 0; j < triangles.size(); j++) {
 					for(ofIndexType k = 0; k < 3; k++) {
 						if(verts[i].x == triangles[j].getVertex(k).x) {
 							if(verts[i].y == triangles[j].getVertex(k).y) {
 								if(verts[i].z == triangles[j].getVertex(k).z) {
-									vertHash[vstring].push_back( j );
+									vertHash[vstring].emplace_back( j );
 								}
 							}
 						}
@@ -1842,17 +1847,18 @@ void ofMesh_<V,N,C,T>::smoothNormals( float angle ) {
 
 		V vert;
 		N normal;
-		float angleCos = cos(ofDegToRad(angle));
+		float angleCos = std::cos(glm::radians(angle));
 		float numNormals=0;
 
 		for(ofIndexType j = 0; j < triangles.size(); j++) {
 			for(ofIndexType k = 0; k < 3; k++) {
 				vert = triangles[j].getVertex(k);
-				xStr = "x"+ofToString(vert.x==-0?0:vert.x);
-				yStr = "y"+ofToString(vert.y==-0?0:vert.y);
-				zStr = "z"+ofToString(vert.z==-0?0:vert.z);
-
-				std::string vstring = xStr+yStr+zStr;
+				std::string vstring {
+					"x"+ofToString(vert.x==-0?0:vert.x) +
+					"y"+ofToString(vert.y==-0?0:vert.y) +
+					"z"+ofToString(vert.z==-0?0:vert.z)
+				};
+				
 				numNormals=0;
 				normal = {0.f,0.f,0.f};
 				if(vertHash.find(vstring) != vertHash.end()) {
@@ -1978,7 +1984,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::plane(float width, float height, int columns,
 			}
 		}
 
-		if(rows%2!=0) mesh.addIndex(mesh.getNumVertices()-columns);
+		if(rows%2!=0) mesh.addIndex(static_cast<ofIndexType>(mesh.getNumVertices()-columns));
 	} else {
 		// Triangles //
 		for(int y = 0; y < rows-1; y++) {
@@ -2021,15 +2027,15 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::sphere( float radius, int res, ofPrimitiveMod
 
 	for(float i = 0; i < res+1; i++) {
 
-		float tr = sin( glm::pi<float>()-i * polarInc );
-		float ny = cos( glm::pi<float>()-i * polarInc );
+		float tr = std::sin( glm::pi<float>()-i * polarInc );
+		float ny = std::cos( glm::pi<float>()-i * polarInc );
 
 		tcoord.y = 1.f - (i / res);
 
 		for(float j = 0; j <= doubleRes; j++) {
 
-			float nx = tr * sin(j * azimInc);
-			float nz = tr * cos(j * azimInc);
+			float nx = tr * std::sin(j * azimInc);
+			float nz = tr * std::cos(j * azimInc);
 
 			tcoord.x = j / (doubleRes);
 
@@ -2120,8 +2126,8 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::sphere( float radius, int res, ofPrimitiveMod
 //--------------------------------------------------------------
 template<class V, class N, class C, class T>
 ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::icosahedron(float radius) {
-        auto mesh = icosphere(radius, 0);
-        mesh.flatNormals();
+	auto mesh { icosphere(radius, 0) };
+	mesh.flatNormals();
 	return mesh;
 }
 
@@ -2135,10 +2141,12 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::icosphere(float radius, std::size_t iteration
 	ofMesh_<V,N,C,T> sphere;
 
 	/// Step 1 : Generate icosahedron
-	const float sqrt5 = sqrt(5.0f);
+	const float sqrt5 = std::sqrt(5.0f);
 	const float phi = (1.0f + sqrt5) * 0.5f;
-	const float invnorm = 1/sqrt(phi*phi+1);
+	const float invnorm = 1/std::sqrt(phi*phi+1);
 
+	
+	// FIXME: addvertices XAXA
     sphere.addVertex(invnorm * V(-1,  phi, 0));//0
 	sphere.addVertex(invnorm * V( 1,  phi, 0));//1
 	sphere.addVertex(invnorm * V(0,   1,  -phi));//2
@@ -2152,7 +2160,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::icosphere(float radius, std::size_t iteration
 	sphere.addVertex(invnorm * V(-1,  -phi,0));//10
 	sphere.addVertex(invnorm * V( 1,  -phi,0));//11
        
-        ofIndexType firstFaces[] = {
+    ofIndexType firstFaces[] = {
 		0,1,2,
 		0,3,1,
 		0,4,5,
@@ -2175,14 +2183,14 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::icosphere(float radius, std::size_t iteration
 		10,11,9
 	};
 
-        for(ofIndexType i = 0; i < 60; i+=3) {
+    for(ofIndexType i = 0; i < 60; i+=3) {
 		sphere.addTriangle(firstFaces[i], firstFaces[i+1], firstFaces[i+2]);
 	}
         
 	auto& vertices = sphere.getVertices();
 	auto& faces = sphere.getIndices();
 
-	ofIndexType size = faces.size();
+	ofIndexType size = static_cast<ofIndexType>(faces.size());
 
 	/// Step 2 : tessellate
 	for (ofIndexType iteration = 0; iteration < iterations; iteration++)
@@ -2194,29 +2202,33 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::icosphere(float radius, std::size_t iteration
 			auto i1 = faces[i*3];
 			auto i2 = faces[i*3+1];
 			auto i3 = faces[i*3+2];
-			auto i12 = vertices.size();
-			auto i23 = i12+1;
-			auto i13 = i12+2;
+			auto i12 = static_cast<ofIndexType>(vertices.size());
+			auto i23 = static_cast<ofIndexType>(i12 + 1);
+			auto i13 = static_cast<ofIndexType>(i12 + 2);
 			auto v1 = vertices[i1];
 			auto v2 = vertices[i2];
 			auto v3 = vertices[i3];
 			//make 1 vertice at the center of each edge and project it onto the sphere
-			vertices.push_back(glm::normalize(toGlm(v1+v2)));
-			vertices.push_back(glm::normalize(toGlm(v2+v3)));
-			vertices.push_back(glm::normalize(toGlm(v1+v3)));
+			vertices.insert(vertices.end(), {
+				glm::normalize(toGlm(v1+v2)),
+				glm::normalize(toGlm(v2+v3)),
+				glm::normalize(toGlm(v1+v3)),
+			});
 			//now recreate indices
-			newFaces.push_back(i1);
-			newFaces.push_back(i12);
-			newFaces.push_back(i13);
-			newFaces.push_back(i2);
-			newFaces.push_back(i23);
-			newFaces.push_back(i12);
-			newFaces.push_back(i3);
-			newFaces.push_back(i13);
-			newFaces.push_back(i23);
-			newFaces.push_back(i12);
-			newFaces.push_back(i23);
-			newFaces.push_back(i13);
+			newFaces.insert(newFaces.end(), {
+				i1,
+				i12,
+				i13,
+				i2,
+				i23,
+				i12,
+				i3,
+				i13,
+				i23,
+				i12,
+				i23,
+				i13
+			});
 		}
 		faces.swap(newFaces);
 	}
@@ -2280,7 +2292,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::icosphere(float radius, std::size_t iteration
 		T t = texCoords[index] + T(1.f, 0.f);
 		vertices.push_back(v);
 		texCoords.push_back(t);
-		ofIndexType newIndex = vertices.size()-1;
+		ofIndexType newIndex = static_cast<ofIndexType>(vertices.size()-1);
 		//reassign indices
 		for (ofIndexType j=0;j<faces.size();j++)
 		{
@@ -2350,7 +2362,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cylinder( float radius, float height, int rad
 	N normal;
 	glm::vec3 up(0,1,0);
 
-	std::size_t vertOffset = 0;
+	ofIndexType vertOffset = 0;
 
 	float maxTexY   = heightSegments-1.f;
 	if(capSegs > 0) {
@@ -2364,8 +2376,8 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cylinder( float radius, float height, int rad
 		for(int iy = 0; iy < capSegs; iy++) {
 			for(int ix = 0; ix < radiusSegments; ix++) {
 				newRad = ofMap((float)iy, 0, capSegs-1, 0.0, radius);
-				vert.x = cos((float)ix*angleIncRadius) * newRad;
-				vert.z = sin((float)ix*angleIncRadius) * newRad;
+				vert.x = std::cos((float)ix*angleIncRadius) * newRad;
+				vert.z = std::sin((float)ix*angleIncRadius) * newRad;
 				vert.y = -halfH;
 
 				tcoord.x = (float)ix/((float)radiusSegments-1.f);
@@ -2402,7 +2414,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cylinder( float radius, float height, int rad
 			}
 		}
 
-		vertOffset = mesh.getNumVertices();
+		vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 
 	}
 
@@ -2418,9 +2430,9 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cylinder( float radius, float height, int rad
 		for(int ix = 0; ix < radiusSegments; ix++) {
 
 			//newRad = ofMap((float)iy, 0, heightSegments-1, 0.0, radius);
-			vert.x = cos(ix*angleIncRadius) * radius;
+			vert.x = std::cos(ix*angleIncRadius) * radius;
 			vert.y = heightInc*float(iy) - halfH;
-			vert.z = sin(ix*angleIncRadius) * radius;
+			vert.z = std::sin(ix*angleIncRadius) * radius;
 
 			tcoord.x = float(ix)/(float(radiusSegments)-1.f);
 			tcoord.y = 1.f - ofMap(iy, 0, heightSegments-1, minTexYNormalized, maxTexYNormalized );
@@ -2457,7 +2469,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cylinder( float radius, float height, int rad
 		}
 	}
 
-	vertOffset = mesh.getNumVertices();
+	vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 
 	// add the bottom cap
 	if(bCapped && capSegs > 0) {
@@ -2468,8 +2480,8 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cylinder( float radius, float height, int rad
 		for(int iy = 0; iy < capSegs; iy++) {
 			for(int ix = 0; ix < radiusSegments; ix++) {
 				newRad = ofMap((float)iy, 0, capSegs-1, radius, 0.0);
-				vert.x = cos((float)ix*angleIncRadius) * newRad;
-				vert.z = sin((float)ix*angleIncRadius) * newRad;
+				vert.x = std::cos((float)ix*angleIncRadius) * newRad;
+				vert.z = std::sin((float)ix*angleIncRadius) * newRad;
 				vert.y = halfH;
 
 				tcoord.x = (float)ix/((float)radiusSegments-1.f);
@@ -2506,7 +2518,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cylinder( float radius, float height, int rad
 			}
 		}
 
-		vertOffset = mesh.getNumVertices();
+		vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 
 	}
 
@@ -2545,7 +2557,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cone( float radius, float height, int radiusS
 	T tcoord;
 	glm::vec3 up(0,1,0);
 
-	std::size_t vertOffset = 0;
+	ofIndexType vertOffset = 0;
 
 	float maxTexY = heightSegments-1.f;
 	if(capSegs > 0) {
@@ -2559,9 +2571,9 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cone( float radius, float height, int radiusS
 		for(int ix = 0; ix < radiusSegments; ix++) {
 
 			newRad = ofMap((float)iy, 0, heightSegments-1, 0.0, radius);
-			vert.x = cos((float)ix*angleIncRadius) * newRad;
+			vert.x = std::cos((float)ix*angleIncRadius) * newRad;
 			vert.y = heightInc*((float)iy) - halfH;
-			vert.z = sin((float)ix*angleIncRadius) * newRad;
+			vert.z = std::sin((float)ix*angleIncRadius) * newRad;
 
 			tcoord.x = (float)ix/((float)radiusSegments-1.f);
 			tcoord.y = 1.f - (float)iy/((float)maxTexY);
@@ -2571,9 +2583,9 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cone( float radius, float height, int radiusS
 
 			if(iy == 0) {
 				newRad = 1.f;
-				vert.x = cos((float)ix*angleIncRadius) * newRad;
+				vert.x = std::cos((float)ix*angleIncRadius) * newRad;
 				vert.y = heightInc*((float)iy) - halfH;
-				vert.z = sin((float)ix*angleIncRadius) * newRad;
+				vert.z = std::sin((float)ix*angleIncRadius) * newRad;
 			}
 
 			auto diff = toGlm(vert - startVec);
@@ -2609,7 +2621,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cone( float radius, float height, int radiusS
 		}
 	}
 
-	vertOffset = mesh.getNumVertices();
+	vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 	float maxTexYNormalized = (heightSegments-1.f) / maxTexY;
 
 	// add the cap //
@@ -2617,8 +2629,8 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::cone( float radius, float height, int radiusS
 	for(int iy = 0; iy < capSegs; iy++) {
 		for(int ix = 0; ix < radiusSegments; ix++) {
 			newRad = ofMap((float)iy, 0, capSegs-1, radius, 0.0);
-			vert.x = cos((float)ix*angleIncRadius) * newRad;
-			vert.z = sin((float)ix*angleIncRadius) * newRad;
+			vert.x = std::cos((float)ix*angleIncRadius) * newRad;
+			vert.z = std::sin((float)ix*angleIncRadius) * newRad;
 			vert.y = halfH;
 
 			tcoord.x = (float)ix/((float)radiusSegments-1.f);
@@ -2689,7 +2701,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::box( float width, float height, float depth, 
 	V vert;
 	T texcoord;
 	N normal;
-	std::size_t vertOffset = 0;
+	ofIndexType vertOffset = 0;
 
 	// TRIANGLES //
 
@@ -2727,7 +2739,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::box( float width, float height, float depth, 
 		}
 	}
 
-	vertOffset = mesh.getNumVertices();
+	vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 
 
 	// Right Side Face //
@@ -2765,7 +2777,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::box( float width, float height, float depth, 
 		}
 	}
 
-	vertOffset = mesh.getNumVertices();
+	vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 
 	// Left Side Face //
 	normal = {-1.f, 0.f, 0.f};
@@ -2802,7 +2814,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::box( float width, float height, float depth, 
 		}
 	}
 
-	vertOffset = mesh.getNumVertices();
+	vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 
 
 	// Back Face //
@@ -2839,7 +2851,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::box( float width, float height, float depth, 
 		}
 	}
 
-	vertOffset = mesh.getNumVertices();
+	vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 
 
 	// Top Face //
@@ -2877,7 +2889,7 @@ ofMesh_<V,N,C,T> ofMesh_<V,N,C,T>::box( float width, float height, float depth, 
 		}
 	}
 
-	vertOffset = mesh.getNumVertices();
+	vertOffset = static_cast<ofIndexType>(mesh.getNumVertices());
 
 
 	// Bottom Face //

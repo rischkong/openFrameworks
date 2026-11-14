@@ -8,7 +8,10 @@
 #pragma once
 
 #include "ofGraphicsConstants.h"
-#include "ofConstants.h"
+#include <vector>
+// MARK: Targets / Defines
+//#include "ofConstants.h"
+
 
 class ofShader;
 class ofGLProgrammableRenderer;
@@ -17,7 +20,6 @@ class ofTexture;
 
 template<typename T>
 class ofPixels_;
-
 typedef ofPixels_<unsigned char> ofPixels;
 typedef ofPixels_<float> ofFloatPixels;
 typedef ofPixels_<unsigned short> ofShortPixels;
@@ -30,9 +32,12 @@ int ofGetGLInternalFormat(const ofPixels & pixels);
 int ofGetGLInternalFormat(const ofShortPixels & pixels);
 int ofGetGLInternalFormat(const ofFloatPixels & pixels);
 
-OF_DEPRECATED_MSG("Use ofGetGLInternalFormat() instead", int ofGetGlInternalFormat(const ofPixels & pixels));
-OF_DEPRECATED_MSG("Use ofGetGLInternalFormat() instead", int ofGetGlInternalFormat(const ofShortPixels & pixels));
-OF_DEPRECATED_MSG("Use ofGetGLInternalFormat() instead", int ofGetGlInternalFormat(const ofFloatPixels & pixels));
+[[deprecated("Use ofGetGLInternalFormat()")]]
+int ofGetGlInternalFormat(const ofPixels & pixels);
+[[deprecated("Use ofGetGLInternalFormat()")]]
+int ofGetGlInternalFormat(const ofShortPixels & pixels);
+[[deprecated("Use ofGetGLInternalFormat()")]]
+int ofGetGlInternalFormat(const ofFloatPixels & pixels);
 
 //---------------------------------
 // this is helpful for debugging ofTexture
@@ -41,8 +46,10 @@ std::string ofGetGLInternalFormatName(int glInternalFormat);
 int ofGetGLFormatFromInternal(int gInternalFormat);
 int ofGetGLTypeFromInternal(int glInternalFormat);
 
-OF_DEPRECATED_MSG("Use ofGetGLInternalFormatName() instead", std::string ofGetGlInternalFormatName(int glInternalFormat));
-OF_DEPRECATED_MSG("Use ofGetGLTypeFromInternal() instead", int ofGetGlTypeFromInternal(int glInternalFormat));
+[[deprecated("Use ofGetGLInternalFormatName()")]]
+std::string ofGetGlInternalFormatName(int glInternalFormat);
+[[deprecated("Use ofGetGLTypeFromInternal()")]]
+int ofGetGlTypeFromInternal(int glInternalFormat);
 
 std::shared_ptr<ofBaseGLRenderer> ofGetGLRenderer();
 
@@ -50,9 +57,12 @@ int ofGetGLType(const ofPixels & pixels);
 int ofGetGLType(const ofShortPixels & pixels);
 int ofGetGLType(const ofFloatPixels & pixels);
 
-OF_DEPRECATED_MSG("Use ofGetGLType() instead", int ofGetGlType(const ofPixels & pixels));
-OF_DEPRECATED_MSG("Use ofGetGLType() instead", int ofGetGlType(const ofShortPixels & pixels));
-OF_DEPRECATED_MSG("Use ofGetGLType() instead", int ofGetGlType(const ofFloatPixels & pixels));
+[[deprecated("Use ofGetGLType()")]]
+int ofGetGlType(const ofPixels & pixels);
+[[deprecated("Use ofGetGLType()")]]
+int ofGetGlType(const ofShortPixels & pixels);
+[[deprecated("Use ofGetGLType()")]]
+int ofGetGlType(const ofFloatPixels & pixels);
 
 ofImageType ofGetImageTypeFromGLType(int glType);
 
@@ -75,13 +85,21 @@ bool ofGLSupportsNPOTTextures();
 
 bool ofIsGLProgrammableRenderer();
 
+/// \brief True when ES 3 code paths are both compiled in (TARGET_OPENGLES_3)
+/// and usable by the current context (ES 3.0+). TARGET_OPENGLES_3 alone only
+/// means the GLES 3 headers exist, which is also true for ES 1 / ES 2 contexts
+/// on iOS and Android.
+bool ofIsGLES3Context();
+
 template<class T>
-OF_DEPRECATED_MSG("Use ofGetGLFormat() instead", int ofGetGlFormat(const ofPixels_<T> & pixels));
+[[deprecated("Use ofGetGLFormat()")]]
+int ofGetGlFormat(const ofPixels_<T> & pixels);
 
 template<class T>
 int ofGetGlFormat(const ofPixels_<T> & pixels) {
 	return ofGetGLFormatFromPixelFormat(pixels.getPixelFormat());
 }
+
 
 template<class T>
 int ofGetGLFormat(const ofPixels_<T> & pixels) {
@@ -91,6 +109,9 @@ int ofGetGLFormat(const ofPixels_<T> & pixels) {
 std::string ofGLSLVersionFromGL(int major, int minor);
 std::string ofGLSLVersionFromGL();
 std::string ofGLSLGetDefaultHeader();
+#ifdef TARGET_OPENGLES
+int ofGLESVersionFromGL();
+#endif
 
 #ifndef TARGET_OPENGLES
 void ofEnableGLDebugLog();
@@ -98,9 +119,12 @@ void ofDisableGLDebugLog();
 #endif
 
 #ifndef TARGET_OPENGLES
-	#define GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS			GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT
-	#define GL_FRAMEBUFFER_INCOMPLETE_FORMATS				GL_FRAMEBUFFER_INCOMPLETE_FORMATS_EXT
-
+	#ifndef GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS
+		#define GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS			GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT
+	#endif
+	#ifndef GL_FRAMEBUFFER_INCOMPLETE_FORMATS
+		#define GL_FRAMEBUFFER_INCOMPLETE_FORMATS				GL_FRAMEBUFFER_INCOMPLETE_FORMATS_EXT
+	#endif
 	#ifndef GL_UNSIGNED_INT_24_8
 		#define GL_UNSIGNED_INT_24_8						GL_UNSIGNED_INT_24_8_EXT
 	#endif
@@ -139,18 +163,28 @@ void ofDisableGLDebugLog();
         #endif
     #endif
 
-	#define GL_FRAMEBUFFER_INCOMPLETE_FORMATS				GL_FRAMEBUFFER_INCOMPLETE_FORMATS_OES
-	#define GL_UNSIGNED_INT_24_8							GL_UNSIGNED_INT_24_8_OES
+	#ifndef GL_FRAMEBUFFER_INCOMPLETE_FORMATS
+		#define GL_FRAMEBUFFER_INCOMPLETE_FORMATS				GL_FRAMEBUFFER_INCOMPLETE_FORMATS_OES
+	#endif
+	#ifndef GL_UNSIGNED_INT_24_8
+		#define GL_UNSIGNED_INT_24_8							GL_UNSIGNED_INT_24_8_OES
+	#endif
 
-	#define GL_DEPTH24_STENCIL8								GL_DEPTH24_STENCIL8_OES
-	#define GL_DEPTH_STENCIL								GL_DEPTH24_STENCIL8_OES
-	#define GL_DEPTH_COMPONENT24							GL_DEPTH_COMPONENT24_OES
+	#ifndef GL_DEPTH24_STENCIL8
+		#define GL_DEPTH24_STENCIL8								GL_DEPTH24_STENCIL8_OES
+	#endif
+	#ifndef GL_DEPTH_STENCIL
+		#define GL_DEPTH_STENCIL								GL_DEPTH24_STENCIL8_OES
+	#endif
+	#ifndef GL_DEPTH_COMPONENT24
+		#define GL_DEPTH_COMPONENT24							GL_DEPTH_COMPONENT24_OES
+	#endif
 	#ifdef GL_DEPTH_COMPONENT32_OES
 		#ifndef GL_DEPTH_COMPONENT32
 			#define GL_DEPTH_COMPONENT32					GL_DEPTH_COMPONENT32_OES
 		#endif
     #endif
-	
+
 	#ifndef GL_RGBA32F
 		#ifdef GL_RGBA32F_EXT
 			#define GL_RGBA32F								GL_RGBA32F_EXT
@@ -164,12 +198,74 @@ void ofDisableGLDebugLog();
         #ifndef GL_HALF_FLOAT
             #define GL_HALF_FLOAT                           GL_HALF_FLOAT_OES
         #endif
-	#ifndef GL_TEXTURE_CUBE_MAP
-		#ifdef GL_TEXTURE_CUBE_MAP_OES
-            #define GL_TEXTURE_CUBE_MAP               		GL_TEXTURE_CUBE_MAP_OES
+		#ifndef GL_TEXTURE_CUBE_MAP
+			#ifdef GL_TEXTURE_CUBE_MAP_OES
+				#define GL_TEXTURE_CUBE_MAP               	GL_TEXTURE_CUBE_MAP_OES
+			#endif
+		#endif
+    #endif
+
+
+	#if (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
+	// === GLES 3.0 / 3.1 additional fallbacks ===
+	// High-precision depth (very useful for shadows / FBOs)
+	#ifndef GL_DEPTH_COMPONENT32F
+		#ifdef GL_DEPTH_COMPONENT32F_EXT
+			#define GL_DEPTH_COMPONENT32F               GL_DEPTH_COMPONENT32F_EXT
 		#endif
 	#endif
-    #endif
+
+	// Half-float textures (16F) — core in GLES 3.0 but often exposed via EXT
+	#ifndef GL_R16F
+		#ifdef GL_R16F_EXT
+			#define GL_R16F                             GL_R16F_EXT
+		#endif
+	#endif
+	#ifndef GL_RG16F
+		#ifdef GL_RG16F_EXT
+			#define GL_RG16F                            GL_RG16F_EXT
+		#endif
+	#endif
+	#ifndef GL_RGB16F
+		#ifdef GL_RGB16F_EXT
+			#define GL_RGB16F                           GL_RGB16F_EXT
+		#endif
+	#endif
+	#ifndef GL_RGBA16F
+		#ifdef GL_RGBA16F_EXT
+			#define GL_RGBA16F                          GL_RGBA16F_EXT
+		#endif
+	#endif
+
+	// 32-bit float textures (also core in GLES 3.0)
+	#ifndef GL_R32F
+		#ifdef GL_R32F_EXT
+			#define GL_R32F                             GL_R32F_EXT
+		#endif
+	#endif
+	#ifndef GL_RG32F
+		#ifdef GL_RG32F_EXT
+			#define GL_RG32F                            GL_RG32F_EXT
+		#endif
+	#endif
+	#ifndef GL_RGB32F
+		#ifdef GL_RGB32F_EXT
+			#define GL_RGB32F                           GL_RGB32F_EXT
+		#endif
+	#endif
+	#ifndef GL_RGBA32F
+		#ifdef GL_RGBA32F_EXT
+			#define GL_RGBA32F                          GL_RGBA32F_EXT
+		#endif
+	#endif
+
+	// Renderbuffer storage for multisampled FBOs (GLES 3.0+)
+	#ifndef glRenderbufferStorageMultisample
+		#ifdef glRenderbufferStorageMultisampleEXT
+			#define glRenderbufferStorageMultisample    glRenderbufferStorageMultisampleEXT
+		#endif
+	#endif
+	#endif
 
 	#ifndef glTexStorage2D
 		#ifdef glTexStorage2DEXT
@@ -177,3 +273,8 @@ void ofDisableGLDebugLog();
 		#endif
 	#endif
 #endif
+
+// Rounds an integer value up to the next multiple of 2,4 and 8.
+#define OF_ROUND_UP_2(num)  (((num)+1)&~1)
+#define OF_ROUND_UP_4(num)  (((num)+3)&~3)
+#define OF_ROUND_UP_8(num)  (((num)+7)&~7)

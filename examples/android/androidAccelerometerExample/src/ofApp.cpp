@@ -16,7 +16,7 @@ void ofApp::update(){
 	messages[0] = "g(x) = " + ofToString(accel.x,2);
 	messages[1] = "g(y) = " + ofToString(accel.y,2);
 	messages[2] = "g(z) = " + ofToString(accel.z,2);
-	normAccel = accel.getNormalized();
+	normAccel = glm::length(accel) > 0 ? glm::normalize(accel) : accel;
 }
 
 //--------------------------------------------------------------
@@ -118,5 +118,26 @@ void ofApp::okPressed(){
 
 //--------------------------------------------------------------
 void ofApp::cancelPressed(){
+
+}
+
+//--------------------------------------------------------------
+void ofApp::deviceRefreshRateChanged(int refreshRate) {
+}
+
+//--------------------------------------------------------------
+void ofApp::deviceHighestRefreshRateChanged(int refreshRate) {
+}
+
+//--------------------------------------------------------------
+void ofApp::deviceRefreshRateChangedEvent(int &refreshRate) {
+}
+
+//--------------------------------------------------------------
+void ofApp::deviceHighestRefreshRateChangedEvent(int &refreshRate) {
+}
+
+//--------------------------------------------------------------
+void ofApp::exit(){
 
 }

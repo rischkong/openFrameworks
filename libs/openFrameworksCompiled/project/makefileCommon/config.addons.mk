@@ -2,18 +2,35 @@
 # PROCESS VALID ADDONS IF AVAILABLE
 ########################################################################
 
+ifeq ($(PLATFORM_OS),Darwin)
+	PLATFORM_ALTERNATIVE := osx
+else
+	PLATFORM_ALTERNATIVE := void
+endif
+
+# Variable containing all grep commands to exclude unwanted paths
+EXCLUDE_PATHS_GREP = grep -v "/tvos-arm64" | \
+					 grep -v "/tvos-arm64_x86_64-simulator" | \
+					 grep -v "/ios-arm64" | \
+					 grep -v "/ios-arm64_x86_64-simulator" | \
+					 grep -v "/ios-arm64_x86_64-maccatalyst" | \
+					 grep -v "/xros-arm64" | \
+					 grep -v "/xros-arm64_x86_64-simulator" | \
+					 grep -v "/watchos-arm64_32_armv7k" | \
+					 grep -v "/watchos-arm64_i386-simulator" | \
+					 grep -v "/\.[^\.]"
 
 # parses addons includes, in PARSED_ADDON_INCLUDES receives full PATHS to addons
 define parse_addons_includes
 	$(eval ADDONS_INCLUDES_FILTER = $(addprefix $1/, $(ADDON_INCLUDES_EXCLUDE))) \
 	$(eval PARSED_ADDONS_SOURCE_PATHS = $(addsuffix /src, $1)) \
-	$(eval PARSED_ADDONS_SOURCE_INCLUDES = $(shell $(FIND) $(PARSED_ADDONS_SOURCE_PATHS) -type d 2> /dev/null | grep -v "/\.[^\.]" )) \
+	$(eval PARSED_ADDONS_SOURCE_INCLUDES = $(shell $(FIND) $(PARSED_ADDONS_SOURCE_PATHS) -type d 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
 	$(eval PARSED_ADDONS_FILTERED_INCLUDE_PATHS = $(filter-out $(ADDONS_INCLUDES_FILTER),$(PARSED_ADDONS_SOURCE_INCLUDES))) \
 	$(eval PARSED_ADDONS_LIBS_SOURCE_PATHS = $(addsuffix /libs, $1)) \
-	$(eval PARSED_ADDONS_LIBS_SOURCE_INCLUDES = $(shell $(FIND) $(PARSED_ADDONS_LIBS_SOURCE_PATHS) -type d 2> /dev/null | grep -v "/\.[^\.]" )) \
+	$(eval PARSED_ADDONS_LIBS_SOURCE_INCLUDES = $(shell $(FIND) $(PARSED_ADDONS_LIBS_SOURCE_PATHS) -type d 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
 	$(eval PARSED_ADDONS_FILTERED_LIBS_SOURCE_INCLUDE_PATHS = $(filter-out $(ADDONS_INCLUDES_FILTER),$(PARSED_ADDONS_LIBS_SOURCE_INCLUDES))) \
 	$(eval PARSED_ADDONS_LIBS_INCLUDES_PATHS = $(addsuffix /libs/*/include, $1)) \
-	$(eval PARSED_ADDONS_LIBS_INCLUDES = $(shell $(FIND) $(PARSED_ADDONS_LIBS_INCLUDES_PATHS) -type d 2> /dev/null | grep -v "/\.[^\.]"  )) \
+	$(eval PARSED_ADDONS_LIBS_INCLUDES = $(shell $(FIND) $(PARSED_ADDONS_LIBS_INCLUDES_PATHS) -type d 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
 	$(eval PARSED_ADDONS_FILTERED_LIBS_INCLUDE_PATHS = $(filter-out $(ADDONS_INCLUDES_FILTER),$(PARSED_ADDONS_LIBS_INCLUDES))) \
 	$(eval PARSED_ADDONS_INCLUDES = $(PARSED_ADDONS_FILTERED_INCLUDE_PATHS)) \
 	$(eval PARSED_ADDONS_INCLUDES += $(PARSED_ADDONS_FILTERED_LIBS_SOURCE_INCLUDE_PATHS)) \
@@ -24,29 +41,36 @@ endef
 define parse_addons_sources
 	$(eval ADDONS_SOURCES_FILTER = $(addprefix $1/, $(ADDON_SOURCES_EXCLUDE))) \
 	$(eval PARSED_ADDONS_SOURCE_PATHS = $(addsuffix /src, $1)) \
-	$(eval PARSED_ADDONS_OFX_SOURCES = $(shell $(FIND) $(PARSED_ADDONS_SOURCE_PATHS) -type f \( -name "*.cpp" -or -name "*.mm" -or -name "*.m" -or -name "*.c" -or -name "*.cc" -or -name "*.cxx" \) 2> /dev/null | grep -v "/\.[^\.]" )) \
+	$(eval PARSED_ADDONS_OFX_SOURCES = $(shell $(FIND) $(PARSED_ADDONS_SOURCE_PATHS) -type f \( -name "*.cpp" -or -name "*.mm" -or -name "*.m" -or -name "*.c" -or -name "*.cc" -or -name "*.cxx" \) 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
 	$(eval PARSED_ADDONS_FILTERED_SOURCE_PATHS = $(filter-out $(ADDONS_SOURCES_FILTER),$(PARSED_ADDONS_OFX_SOURCES))) \
 	$(eval PARSED_ADDONS_LIBS_SOURCE_PATHS = $(addsuffix /libs, $1)) \
-	$(eval PARSED_ADDONS_LIBS_SOURCES = $(shell $(FIND) $(PARSED_ADDONS_LIBS_SOURCE_PATHS) -type f \( -name "*.cpp" -or -name "*.mm" -or -name "*.m" -or -name "*.c" -or -name "*.cc" -or -name "*.cxx" \) 2> /dev/null | grep -v "/\.[^\.]"  )) \
+	$(eval PARSED_ADDONS_LIBS_SOURCES = $(shell $(FIND) $(PARSED_ADDONS_LIBS_SOURCE_PATHS) -type f \( -name "*.cpp" -or -name "*.mm" -or -name "*.m" -or -name "*.c" -or -name "*.cc" -or -name "*.cxx" \) 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
 	$(eval PARSED_ADDONS_FILTERED_LIBS_SOURCE_PATHS = $(filter-out $(ADDONS_SOURCES_FILTER),$(PARSED_ADDONS_LIBS_SOURCES))) \
 	$(eval PARSED_ADDONS_SOURCE_FILES = $(PARSED_ADDONS_FILTERED_SOURCE_PATHS)) \
 	$(eval PARSED_ADDONS_SOURCE_FILES += $(PARSED_ADDONS_FILTERED_LIBS_SOURCE_PATHS))
 endef
 
 # parses addons libraries, in PARSED_ADDON_LIBS receives full PATHS to addons and libs_exclude
+# Select exactly one platform directory per addon library. Canonical structured
+# paths have priority; legacy flat paths are fallbacks for existing addons.
 define parse_addons_libraries
-	$(eval PARSED_ADDONS_LIBS_PLATFORM_LIB_PATHS = $(filter-out $(ADDON_LIBS_EXCLUDE),$(addsuffix /libs/*/lib/$(ABI_LIB_SUBPATH), $1))) \
-	$(eval PARSED_ALL_PLATFORM_LIBS = $(shell $(FIND) $(PARSED_ADDONS_LIBS_PLATFORM_LIB_PATHS) -type d 2> /dev/null | grep -v "/\.[^\.]" )) \
+	$(eval PARSED_ADDONS_LIB_ROOTS = $(wildcard $1/libs/*)) \
+	$(eval PARSED_ADDONS_LIBS_PLATFORM_LIB_PATHS = $(filter-out $(ADDON_LIBS_EXCLUDE),$(foreach addon_lib_root,$(PARSED_ADDONS_LIB_ROOTS),$(call find_platform_lib_path,$(addon_lib_root))))) \
+	$(eval PARSED_ADDONS_LIBS_PLATFORM_LIB_PATHS += $(filter-out $(ADDON_LIBS_EXCLUDE),$(addsuffix /libs/*/lib/$(PLATFORM_ALTERNATIVE), $1))) \
+	$(eval PARSED_ALL_PLATFORM_LIBS = $(shell $(FIND) $(PARSED_ADDONS_LIBS_PLATFORM_LIB_PATHS) -type d 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
 	$(if $(PARSED_ALL_PLATFORM_LIBS), \
-		$(eval PARSED_ADDONS_LIBS_PLATFORM_LIBS_STATICS = $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.a 2> /dev/null | grep -v "/\.[^\.]" )) \
-		$(eval PARSED_ADDONS_LIBS_PLATFORM_LIBS_SHARED = $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.so 2> /dev/null | grep -v "/\.[^\.]" )) \
-		$(eval PARSED_ADDONS_LIBS_PLATFORM_LIBS_SHARED += $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.dylib 2> /dev/null | grep -v "/\.[^\.]" )) \
-		$(eval PARSED_ADDONS_LIBS_PLATFORM_LIBS_SHARED += $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.dll 2> /dev/null | grep -v "/\.[^\.]" )) \
+		$(eval ADDONS_SHARED_LIBS_SO += $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.so 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
+		$(eval ADDONS_SHARED_LIBS_SO += $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.so.* 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
+		$(eval ADDONS_SHARED_LIBS_DLL += $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.dll 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
+		$(eval ADDONS_SHARED_LIBS_DYLIB += $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.dylib 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
+		$(eval PARSED_ADDONS_LIBS_PLATFORM_LIBS_STATICS = $(shell $(FIND) $(PARSED_ALL_PLATFORM_LIBS) -name *.a 2> /dev/null | $(EXCLUDE_PATHS_GREP))) \
+		$(eval PARSED_ADDONS_LIBS_PLATFORM_LIBS_SHARED = $(ADDONS_SHARED_LIBS_SO)) \
+		$(eval PARSED_ADDONS_LIBS_PLATFORM_LIBS_SHARED += $(ADDONS_SHARED_LIBS_DLL)) \
+		$(eval PARSED_ADDONS_LIBS_PLATFORM_LIBS_SHARED += $(ADDONS_SHARED_LIBS_DYLIB)) \
 		$(eval PARSED_ADDONS_LIBS = $(PARSED_ADDONS_LIBS_PLATFORM_LIBS_STATICS)) \
 		$(eval PARSED_ADDONS_LIBS += $(PARSED_ADDONS_LIBS_PLATFORM_LIBS_SHARED)) \
 	)
 endef
-
 
 space :=
 space +=
@@ -64,18 +88,19 @@ endef
 # 1. read the addon_config.mk file for each adddon that has it
 # 2. read each line of the addon by converting \n to \t since makefiles treat \n as spaces
 #    also convert spaces to ? so foreach works for each line instead of each word
+#    (tabs to spaces first: a tab inside a line split it, so "#<tab>ADDON_SOURCES = x" was not a comment)
 # 3. unscape ? to space inside the loop
 # 4. if the line matches common: or platform: set the PROCESS_NEXT flag to true
 # 5. if the line matches %: but it's not common or platform: set PROCESS_NEXT to false
 # 6: if PROCESS_NEXT eval the line to put the variable in the makefile space
 define parse_addon
 	$(if $(wildcard $(PROJECT_ROOT)/$1), \
-		$(eval addon=$(realpath $(addprefix $(PROJECT_ROOT)/, $1))) \
+		$(eval addon=$(addprefix $(PROJECT_ROOT)/, $1)) \
 		$(eval addon_obj_path=$(PROJECT_ROOT)) \
 		$(eval ADDON_PATHS+= $(dir $(addon))) \
 		$(eval obj_prefix=$(OF_PROJECT_OBJ_OUTPUT_PATH)addons/) \
 	, \
-		$(eval addon=$(realpath $(addprefix $(OF_ADDONS_PATH)/, $1))) \
+		$(eval addon=$(addprefix $(OF_ADDONS_PATH)/, $1)) \
 		$(eval addon_obj_path=$(OF_ADDONS_PATH)) \
 		$(eval obj_prefix=$(OF_PROJECT_OBJ_OUTPUT_PATH)) \
 	) \
@@ -87,6 +112,7 @@ define parse_addon
 	$(eval ADDON_PKG_CONFIG_LIBRARIES= ) \
 	$(eval ADDON_FRAMEWORKS= ) \
 	$(eval ADDON_LIBS_EXCLUDE= ) \
+	$(eval ADDON_DEFINES= ) \
 	$(eval ADDON_SOURCES_EXCLUDE= ) \
 	$(call parse_addons_includes, $(addon)) \
 	$(eval ADDON_INCLUDES=$(PARSED_ADDONS_INCLUDES)) \
@@ -96,24 +122,26 @@ define parse_addon
 	$(eval ADDON_SOURCES=$(PARSED_ADDONS_SOURCE_FILES)) \
 	$(eval PROCESS_NEXT=0) \
 	$(if $(wildcard $(addon)/addon_config.mk), \
-		$(foreach var_line, $(shell cat $(addon)/addon_config.mk | tr '\n ' '\t?'), \
+		$(foreach var_line, $(shell tr '\t' ' ' < $(addon)/addon_config.mk | tr '\n ' '\t?'), \
 			$(eval unscaped_var_line=$(strip $(subst ?, ,$(var_line)))) \
-			$(if $(filter $(PROCESS_NEXT),1), $(eval $(unscaped_var_line))) \
 			$(if $(filter %:,$(unscaped_var_line)), \
 				$(if $(filter common:,$(unscaped_var_line)), \
 					$(eval PROCESS_NEXT=1), \
-					$(if $(filter $(ABI_LIB_SUBPATH):,$(unscaped_var_line)), \
+					$(if $(filter $(addsuffix :,$(PLATFORM_ADDON_KEYS) $(PLATFORM_ALTERNATIVE)),$(unscaped_var_line)), \
 						$(eval PROCESS_NEXT=1), \
 						$(eval PROCESS_NEXT=0) \
 					) \
-				) \
+				), \
+				$(if $(filter $(PROCESS_NEXT),1), $(eval $(unscaped_var_line))) \
 			) \
 		) \
 	) \
 	$(if $(strip $(ADDON_INCLUDES)), \
+		$(info ADDON_INCLUDES_EXCLUDE: $(ADDON_INCLUDES_EXCLUDE)) \
 		$(eval ADDON_INCLUDES_FILTERED = $(filter-out $(addprefix $(addon)/,$(ADDON_INCLUDES_EXCLUDE)),$(ADDON_INCLUDES))) \
 		$(foreach addon_include, $(strip $(ADDON_INCLUDES_FILTERED)), \
 			$(if $(wildcard $(addon)/$(addon_include)), \
+				$(info Adding include: $(addon)/$(addon_include)) \
 				$(eval TMP_PROJECT_ADDONS_INCLUDES += $(addon)/$(addon_include)) \
 			) \
 			$(if $(wildcard $(addon_include)), \
@@ -125,19 +153,24 @@ define parse_addon
 	$(eval TMP_PROJECT_ADDONS_CFLAGS += $(ADDON_CPPFLAGS)) \
 	$(if $(strip $(ADDON_LIBS)), \
 		$(foreach addon_lib, $(strip $(ADDON_LIBS)), \
-			$(if $(wildcard $(addon)/$(addon_lib)), \
-				$(eval TMP_PROJECT_ADDONS_LIBS += $(addon)/$(addon_lib)) \
+			$(eval lib_pattern := $(subst %,*,$(addon_lib))) \
+			$(eval match := $(wildcard $(addon)/$(lib_pattern))) \
+			$(if $(match), \
+				$(eval TMP_PROJECT_ADDONS_LIBS += $(match)) \
 			) \
-			$(if $(wildcard $(addon_lib)), \
-				$(eval TMP_PROJECT_ADDONS_LIBS += $(addon_lib)) \
+			$(eval match_global := $(wildcard $(lib_pattern))) \
+			$(if $(match_global), \
+				$(eval TMP_PROJECT_ADDONS_LIBS += $(match_global)) \
 			) \
 		) \
 	) \
 	$(eval TMP_PROJECT_ADDONS_LDFLAGS += $(ADDON_LDFLAGS)) \
 	$(eval TMP_PROJECT_ADDONS_PKG_CONFIG_LIBRARIES += $(ADDON_PKG_CONFIG_LIBRARIES)) \
 	$(eval TMP_PROJECT_ADDONS_FRAMEWORKS += $(ADDON_FRAMEWORKS)) \
+	$(eval TMP_PROJECT_ADDONS_DEFINES += $(ADDON_DEFINES)) \
 	$(eval PROJECT_AFTER += $(ADDON_AFTER)) \
 	$(if $(strip $(ADDON_SOURCES)), \
+		$(info ADDON_SOURCES_EXCLUDE: $(ADDON_SOURCES_EXCLUDE)) \
 		$(eval ADDON_SOURCES_FILTERED = $(filter-out $(addprefix $(addon)/,$(ADDON_SOURCES_EXCLUDE)),$(ADDON_SOURCES))) \
 		$(foreach addon_src, $(strip $(ADDON_SOURCES_FILTERED)), \
 			$(if $(filter $(addon)%, $(addon_src)), \
@@ -230,6 +263,7 @@ PROJECT_ADDONS_FRAMEWORKS = $(call uniq,$(TMP_PROJECT_ADDONS_FRAMEWORKS))
 PROJECT_ADDONS_SOURCE_FILES = $(call uniq,$(TMP_PROJECT_ADDONS_SOURCE_FILES))
 PROJECT_ADDONS_OBJ_FILES = $(call uniq,$(TMP_PROJECT_ADDONS_OBJ_FILES))
 PROJECT_ADDONS_DATA = $(call uniq,$(TMP_PROJECT_ADDONS_DATA))
+PROJECT_ADDONS_DEFINES = $(call uniq,$(TMP_PROJECT_ADDONS_DEFINES))
 VPATH += $(call uniq, $(ADDON_PATHS))
 
 
@@ -241,26 +275,26 @@ OF_PROJECT_ADDONS_DEPS = $(patsubst %.o,%.d,$(PROJECT_ADDONS_OBJ_FILES))
 ########################################################################
 # print debug information if so instructed
 ifdef MAKEFILE_DEBUG
-    $(info ---PROJECT_ADDONS_PATHS---)
-    $(foreach v, $(PROJECT_ADDONS_PATHS),$(info $(v)))
-    $(info ---PROJECT_ADDONS_WITH_CONFIG---)
-    $(foreach v, $(PROJECT_ADDONS_WITH_CONFIG),$(info $(v)))
-    $(info ---PROJECT_ADDONS_INCLUDES---)
-    $(foreach v, $(PROJECT_ADDONS_INCLUDES),$(info $(v)))
-    $(info ---PROJECT_ADDONS_SOURCE_FILES---)
-    $(foreach v, $(PROJECT_ADDONS_SOURCE_FILES),$(info $(v)))
-    $(info ---PROJECT_ADDONS_LIBS---)
-    $(foreach v, $(PROJECT_ADDONS_LIBS),$(info $(v)))
-    $(info ---PROJECT_ADDONS_OBJFILES---)
-    $(foreach v, $(PROJECT_ADDONS_OBJFILES),$(info $(v)))
-    $(info ---PROJECT_ADDONS_BASE_CFLAGS---)
-    $(foreach v, $(PROJECT_ADDONS_BASE_CFLAGS),$(info $(v)))
-    $(info ---PROJECT_ADDONS_DEFINES_CFLAGS---)
-    $(foreach v, $(PROJECT_ADDONS_DEFINES_CFLAGS),$(info $(v)))
-    $(info ---PROJECT_ADDONS_INCLUDES_CFLAGS---)
-    $(foreach v, $(PROJECT_ADDONS_INCLUDES_CFLAGS),$(info $(v)))
-    $(info ---PROJECT_ADDONS_LDFLAGS---)
-    $(foreach v, $(PROJECT_ADDONS_LDFLAGS),$(info $(v)))
-    $(info ---PROJECT_ADDONS_DATA---)
-    $(foreach v, $(PROJECT_ADDONS_DATA),$(info $(v)))
+	$(info ---PROJECT_ADDONS_PATHS---)
+	$(foreach v, $(PROJECT_ADDONS_PATHS),$(info $(v)))
+	$(info ---PROJECT_ADDONS_WITH_CONFIG---)
+	$(foreach v, $(PROJECT_ADDONS_WITH_CONFIG),$(info $(v)))
+	$(info ---PROJECT_ADDONS_INCLUDES---)
+	$(foreach v, $(PROJECT_ADDONS_INCLUDES),$(info $(v)))
+	$(info ---PROJECT_ADDONS_SOURCE_FILES---)
+	$(foreach v, $(PROJECT_ADDONS_SOURCE_FILES),$(info $(v)))
+	$(info ---PROJECT_ADDONS_LIBS---)
+	$(foreach v, $(PROJECT_ADDONS_LIBS),$(info $(v)))
+	$(info ---PROJECT_ADDONS_OBJFILES---)
+	$(foreach v, $(PROJECT_ADDONS_OBJFILES),$(info $(v)))
+	$(info ---PROJECT_ADDONS_BASE_CFLAGS---)
+	$(foreach v, $(PROJECT_ADDONS_BASE_CFLAGS),$(info $(v)))
+	$(info ---PROJECT_ADDONS_DEFINES_CFLAGS---)
+	$(foreach v, $(PROJECT_ADDONS_DEFINES_CFLAGS),$(info $(v)))
+	$(info ---PROJECT_ADDONS_INCLUDES_CFLAGS---)
+	$(foreach v, $(PROJECT_ADDONS_INCLUDES_CFLAGS),$(info $(v)))
+	$(info ---PROJECT_ADDONS_LDFLAGS---)
+	$(foreach v, $(PROJECT_ADDONS_LDFLAGS),$(info $(v)))
+	$(info ---PROJECT_ADDONS_DATA---)
+	$(foreach v, $(PROJECT_ADDONS_DATA),$(info $(v)))
 endif

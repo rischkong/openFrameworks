@@ -1,6 +1,8 @@
-#include "cairo-features.h"
-#include "cairo-pdf.h"
-#include "cairo-svg.h"
+#include "ofConstants.h"
+#if defined(OF_CAIRO)
+#include <cairo/cairo-features.h>
+#include <cairo/cairo-pdf.h>
+#include <cairo/cairo-svg.h>
 #include "ofCairoRenderer.h"
 #include "ofGraphics.h"
 #include "ofImage.h"
@@ -46,17 +48,17 @@ void ofCairoRenderer::setup(const of::filesystem::path & _filename, Type _type, 
 	streamBuffer.clear();
 
 	if (type == FROM_FILE_EXTENSION) {
-		auto ext = filename.extension();
-		if (ext == of::filesystem::path { ".svg" } || ext == of::filesystem::path { ".SVG" }) {
+		auto ext = ofGetExtensionLower(filename);
+		if (ext == ".svg") {
 			type = SVG;
-		} else if (ext == of::filesystem::path { ".pdf" } || ext == of::filesystem::path { ".PDF" }) {
+		} else if (ext == ".pdf") {
 			type = PDF;
 		} else { // default to image
 			type = IMAGE;
 		}
 	}
 
-	if (filename != "") {
+	if (!filename.empty()) {
 		switch (type) {
 		case PDF:
 		case SVG:
@@ -69,19 +71,18 @@ void ofCairoRenderer::setup(const of::filesystem::path & _filename, Type _type, 
 
 	switch (type) {
 	case PDF:
-		if (filename == "") {
+		if (filename.empty()) {
 			surface = cairo_pdf_surface_create_for_stream(&ofCairoRenderer::stream_function, this, outputsize.width, outputsize.height);
 		} else {
-			// FIXME: Future - once ofToDataPath returns fs::path, remove c_str()
-			surface = cairo_pdf_surface_create(ofToDataPath(filename).c_str(), outputsize.width, outputsize.height);
+			// it is necessary to convert to string since the function doesn't support wide char.
+			surface = cairo_pdf_surface_create(ofPathToString(ofToDataPath(filename)).c_str(), outputsize.width, outputsize.height);
 		}
 		break;
 	case SVG:
-		if (filename == "") {
+		if (filename.empty()) {
 			surface = cairo_svg_surface_create_for_stream(&ofCairoRenderer::stream_function, this, outputsize.width, outputsize.height);
 		} else {
-			// FIXME: Future - once ofToDataPath returns fs::path, remove c_str()
-			surface = cairo_svg_surface_create(ofToDataPath(filename).c_str(), outputsize.width, outputsize.height);
+			surface = cairo_svg_surface_create(ofPathToString(ofToDataPath(filename)).c_str(), outputsize.width, outputsize.height);
 		}
 		break;
 	case IMAGE:
@@ -121,7 +122,7 @@ void ofCairoRenderer::flush() {
 void ofCairoRenderer::close() {
 	if (surface) {
 		cairo_surface_flush(surface);
-		if (type == IMAGE && filename != "") {
+		if (type == IMAGE && !filename.empty()) {
 			ofSaveImage(imageBuffer, filename);
 		}
 		cairo_surface_finish(surface);
@@ -132,6 +133,15 @@ void ofCairoRenderer::close() {
 		cairo_destroy(cr);
 		cr = nullptr;
 	}
+}
+
+int ofCairoRenderer::getMaxTextureSize() {
+	// From the cairo source: https://github.com/ImageMagick/cairo/blob/main/src/cairo-image-surface.c#L62
+	/* Limit on the width / height of an image surface in pixels.  This is
+	 * mainly determined by coordinates of things sent to pixman at the
+	 * moment being in 16.16 format. */
+//	#define MAX_IMAGE_SIZE 32767
+	return 32767;
 }
 
 void ofCairoRenderer::startRender() {
@@ -474,11 +484,11 @@ void ofCairoRenderer::draw(const ofPath::Command & command) const {
 			mut_this->translate(0, -command.to.y * ellipse_ratio);
 			mut_this->scale(1, ellipse_ratio);
 			mut_this->translate(0, command.to.y / ellipse_ratio);
-			cairo_arc(cr, command.to.x, command.to.y, command.radiusX, ofDegToRad(command.angleBegin), ofDegToRad(command.angleEnd));
+			cairo_arc(cr, command.to.x, command.to.y, command.radiusX, glm::radians(command.angleBegin), glm::radians(command.angleEnd));
 			//cairo_set_matrix(cr,&stored_matrix);
 			mut_this->popMatrix();
 		} else {
-			cairo_arc(cr, command.to.x, command.to.y, command.radiusX, ofDegToRad(command.angleBegin), ofDegToRad(command.angleEnd));
+			cairo_arc(cr, command.to.x, command.to.y, command.radiusX, glm::radians(command.angleBegin), glm::radians(command.angleEnd));
 		}
 		break;
 
@@ -491,11 +501,11 @@ void ofCairoRenderer::draw(const ofPath::Command & command) const {
 			mut_this->translate(0, -command.to.y * ellipse_ratio);
 			mut_this->scale(1, ellipse_ratio);
 			mut_this->translate(0, command.to.y / ellipse_ratio);
-			cairo_arc_negative(cr, command.to.x, command.to.y, command.radiusX, ofDegToRad(command.angleBegin), ofDegToRad(command.angleEnd));
+			cairo_arc_negative(cr, command.to.x, command.to.y, command.radiusX, glm::radians(command.angleBegin), glm::radians(command.angleEnd));
 			//cairo_set_matrix(cr,&stored_matrix);
 			mut_this->popMatrix();
 		} else {
-			cairo_arc_negative(cr, command.to.x, command.to.y, command.radiusX, ofDegToRad(command.angleBegin), ofDegToRad(command.angleEnd));
+			cairo_arc_negative(cr, command.to.x, command.to.y, command.radiusX, glm::radians(command.angleBegin), glm::radians(command.angleEnd));
 		}
 		break;
 
@@ -655,6 +665,12 @@ void ofCairoRenderer::setLineWidth(float lineWidth) {
 		path.setStrokeWidth(lineWidth);
 	}
 	cairo_set_line_width(cr, lineWidth);
+}
+
+//--------------------------------------------
+void ofCairoRenderer::setPointSize(float pointSize) {
+	currentStyle.pointSize = pointSize;
+	// no point size for cairo
 }
 
 //----------------------------------------------------------
@@ -964,7 +980,7 @@ void ofCairoRenderer::setupScreenPerspective(float width, float height, float fo
 	if (nearDist == 0) nearDist = dist / 10.0f;
 	if (farDist == 0) farDist = dist * 10.0f;
 
-	projection = glm::perspective(ofDegToRad(fov), aspect, nearDist, farDist);
+	projection = glm::perspective(glm::radians(fov), aspect, nearDist, farDist);
 	modelView = glm::lookAt(glm::vec3(eyeX, eyeY, dist), glm::vec3(eyeX, eyeY, 0), glm::vec3(0, 1, 0));
 
 	switch (orientation) {
@@ -1376,7 +1392,7 @@ ofPixels & ofCairoRenderer::getImageSurfacePixels() {
 }
 
 ofBuffer & ofCairoRenderer::getContentBuffer() {
-	if (filename != "" || (type != SVG && type != PDF)) {
+	if (!filename.empty() || (type != SVG && type != PDF)) {
 		ofLogError("ofCairoRenderer") << "getContentBuffer(): can only get buffer from memory allocated renderer for svg or pdf";
 	}
 	return streamBuffer;
@@ -1389,3 +1405,4 @@ const of3dGraphics & ofCairoRenderer::get3dGraphics() const {
 of3dGraphics & ofCairoRenderer::get3dGraphics() {
 	return graphics3d;
 }
+#endif

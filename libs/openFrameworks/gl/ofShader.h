@@ -7,11 +7,25 @@
  make sure to catch and report that error.
  */
 
+// MARK: ofConstants Targets
 #include "ofConstants.h"
-#include "glm/fwd.hpp"
+#include <vector>
+
+#include <glm/detail/qualifier.hpp>
+namespace glm {
+	typedef vec<2, float, defaultp>		vec2;
+	typedef vec<3, float, defaultp>		vec3;
+	typedef vec<4, float, defaultp>		vec4;
+
+	typedef float					f32;
+	typedef mat<3, 3, f32, defaultp>	mat3;
+	typedef mat<4, 4, f32, defaultp>	mat4;
+}
+
 #include <unordered_map>
 
 class ofTexture;
+class ofTextureData;
 class ofMatrix3x3;
 class ofParameterGroup;
 class ofBufferObject;
@@ -61,11 +75,11 @@ public:
 
 	bool load(const of::filesystem::path& shaderName);
 	bool load(const of::filesystem::path& vertName, const of::filesystem::path& fragName, const of::filesystem::path& geomName="");
-#if !defined(TARGET_OPENGLES) && defined(glDispatchCompute)
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_1) && defined(TARGET_OPENGLES_3) && defined(glDispatchCompute))
 	bool loadCompute(const of::filesystem::path& shaderName);
 #endif
 
-#if !defined(TARGET_OPENGLES) || defined(TARGET_EMSCRIPTEN)
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 	struct TransformFeedbackSettings {
 		std::unordered_map<GLuint, of::filesystem::path> shaderFiles;
 		std::unordered_map<GLuint, std::string> shaderSources;
@@ -105,7 +119,7 @@ public:
 #endif
 
 	bool setup(const ofShaderSettings & settings);
-#if !defined(TARGET_OPENGLES) || defined(TARGET_EMSCRIPTEN)
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 	bool setup(const TransformFeedbackSettings & settings);
 #endif
 
@@ -124,7 +138,8 @@ public:
 	void begin() const;
 	void end() const;
 
-#if !defined(TARGET_OPENGLES) || defined(TARGET_EMSCRIPTEN)
+
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 	void beginTransformFeedback(GLenum mode) const;
 	void beginTransformFeedback(GLenum mode, const TransformFeedbackRangeBinding & binding) const;
 	void beginTransformFeedback(GLenum mode, const std::vector<TransformFeedbackRangeBinding> & binding) const;
@@ -137,7 +152,7 @@ public:
 	void endTransformFeedback(const std::vector<TransformFeedbackBaseBinding> & binding) const;
 #endif
 
-#if !defined(TARGET_OPENGLES) && defined(glDispatchCompute)
+#if !defined(TARGET_OPENGLES) || (defined(TARGET_OPENGLES_3) && defined(glDispatchCompute) && defined(GL_ES_VERSION_3_1))
 	void dispatchCompute(GLuint x, GLuint y, GLuint z) const;
 #endif
 
@@ -145,6 +160,7 @@ public:
 	void setUniformTexture(const std::string & name, const ofBaseHasTexture& img, int textureLocation) const;
 	void setUniformTexture(const std::string & name, const ofTexture& img, int textureLocation) const;
 	void setUniformTexture(const std::string & name, int textureTarget, GLint textureID, int textureLocation) const;
+	void setUniformTexture(const std::string & name, const ofTextureData& texData, int textureLocation) const;
 
 	// set a single uniform value
 	void setUniform1i(const std::string & name, int v1) const;
@@ -160,6 +176,7 @@ public:
 	void setUniform2f(const std::string & name, const glm::vec2 & v) const;
 	void setUniform3f(const std::string & name, const glm::vec3 & v) const;
 	void setUniform4f(const std::string & name, const glm::vec4 & v) const;
+	void setUniform3f(const std::string & name, const ofFloatColor & v) const;
 	void setUniform4f(const std::string & name, const ofFloatColor & v) const;
 
 	// set an array of uniform values
@@ -184,11 +201,11 @@ public:
 	// set attributes that vary per vertex (look up the location before glBegin)
 	GLint getAttributeLocation(const std::string & name) const;
 
-#ifndef TARGET_OPENGLES
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 #ifdef GLEW_ARB_uniform_buffer_object
 	GLint getUniformBlockIndex(const std::string & name) const;
 	GLint getUniformBlockBinding(const std::string & name) const;
-	void bindUniformBlock(GLuint bindind, const std::string & name) const;
+	void bindUniformBlock(GLuint binding, const std::string & name) const;
 	void printActiveUniformBlocks() const;
 #endif
 #endif
@@ -229,8 +246,8 @@ public:
 
 	// these methods create and compile a shader from source or file
 	// type: GL_VERTEX_SHADER, GL_FRAGMENT_SHADER, GL_GEOMETRY_SHADER_EXT etc.
-	bool setupShaderFromSource(GLenum type, std::string source, std::string sourceDirectoryPath = "");
-	bool setupShaderFromFile(GLenum type, const of::filesystem::path& filename);
+	bool setupShaderFromSource(GLenum type, std::string source, of::filesystem::path sourceDirectoryPath = "");
+	bool setupShaderFromFile(GLenum type, const of::filesystem::path & filename);
 
 	// links program with all compiled shaders
 	bool linkProgram();
@@ -296,8 +313,8 @@ private:
 	/// @note			Include paths are always specified _relative to the including file's current path_
 	///	@note			Recursive #pragma include statements are possible
 	/// @note			Includes will be processed up to 32 levels deep
-	static std::string parseForIncludes( const std::string& source, const of::filesystem::path& sourceDirectoryPath = "");
-	static std::string parseForIncludes( const std::string& source, std::vector<std::string>& included, int level = 0, const of::filesystem::path& sourceDirectoryPath = "");
+	static std::string parseForIncludes( const std::string & source, const of::filesystem::path & sourceDirectoryPath = "");
+	static std::string parseForIncludes( const std::string & source, std::vector<of::filesystem::path> & included, int level = 0, const of::filesystem::path & sourceDirectoryPath = "");
 
 	void checkAndCreateProgram();
 #ifdef TARGET_ANDROID

@@ -29,6 +29,8 @@
  *
  * ***********************************************************************/ 
 #include <TargetConditionals.h>
+#include "ofxiOSConstants.h"
+#if defined(TARGET_OF_IOS)
 #include "ofAppiOSWindow.h"
 #include "ofGLRenderer.h"
 #include "ofGLProgrammableRenderer.h"
@@ -43,6 +45,71 @@
 #endif
 #include "ofxiOSGLKView.h"
 #include "ofxiOSEAGLView.h"
+
+@interface ofxiOSSceneDelegate : UIResponder <UIWindowSceneDelegate>
+@property (strong, nonatomic) UIWindow * window;
+@end
+
+@implementation ofxiOSSceneDelegate
+
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+	if (![scene isKindOfClass:[UIWindowScene class]]) return;
+	id<UIApplicationDelegate> appDelegate = [UIApplication sharedApplication].delegate;
+	if ([appDelegate respondsToSelector:@selector(window)]) {
+		self.window = appDelegate.window;
+	}
+	if (self.window) {
+		self.window.windowScene = (UIWindowScene *)scene;
+		[self.window makeKeyAndVisible];
+	}
+	[self scene:scene openURLContexts:connectionOptions.URLContexts];
+}
+
+- (void)sceneDidBecomeActive:(UIScene *)scene {
+	[self forward:@selector(applicationDidBecomeActive:)];
+}
+
+- (void)sceneWillResignActive:(UIScene *)scene {
+	[self forward:@selector(applicationWillResignActive:)];
+}
+
+- (void)sceneWillEnterForeground:(UIScene *)scene {
+	[self forward:@selector(applicationWillEnterForeground:)];
+}
+
+- (void)sceneDidEnterBackground:(UIScene *)scene {
+	[self forward:@selector(applicationDidEnterBackground:)];
+}
+
+- (void)scene:(UIScene *)scene openURLContexts:(NSSet<UIOpenURLContext *> *)URLContexts {
+	id<UIApplicationDelegate> appDelegate = [UIApplication sharedApplication].delegate;
+	for (UIOpenURLContext * context in URLContexts) {
+		if ([appDelegate respondsToSelector:@selector(application:openURL:options:)]) {
+			[appDelegate application:[UIApplication sharedApplication] openURL:context.URL options:@{}];
+		}
+#if !TARGET_OS_TV
+		else if ([appDelegate respondsToSelector:@selector(application:handleOpenURL:)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+			[appDelegate application:[UIApplication sharedApplication] handleOpenURL:context.URL];
+#pragma clang diagnostic pop
+		}
+#endif
+	}
+}
+
+// calls the app delegate's application...: method for a scene event
+- (void)forward:(SEL)selector {
+	id<UIApplicationDelegate> appDelegate = [UIApplication sharedApplication].delegate;
+	if ([appDelegate respondsToSelector:selector]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+		[appDelegate performSelector:selector withObject:[UIApplication sharedApplication]];
+#pragma clang diagnostic pop
+	}
+}
+
+@end
 
 //----------------------------------------------------------------------------------- instance.
 static ofAppiOSWindow * _instance = NULL;
@@ -486,3 +553,5 @@ std::shared_ptr<ofBaseRenderer> & ofAppiOSWindow::renderer(){
 ofiOSWindowSettings & ofAppiOSWindow::getSettings() {
     return settings;
 }
+
+#endif

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# FreeImage is supplied by Apothecary via scripts/linux/download_libs.sh.
 
 if [ $EUID != 0 ]; then
 	echo "this script must be run as root"
@@ -37,7 +38,7 @@ fi
 
 
 echo "installing OF dependencies"
-apt-get install freeglut3-dev libasound2-dev libxmu-dev libxxf86vm-dev g++ libraw1394-dev libudev-dev libdrm-dev libglew-dev libopenal-dev libsndfile-dev libfreeimage-dev libcairo2-dev libfreetype6-dev libssl-dev libpulse-dev libusb-1.0-0-dev libgtk${GTK_VERSION}-dev libopencv-dev libassimp-dev librtaudio-dev libboost-filesystem-dev libglfw3-dev  liburiparser-dev libcurl4-openssl-dev libpugixml-dev
+apt-get install freeglut3-dev libasound2-dev libxmu-dev libxxf86vm-dev g++ libraw1394-dev libudev-dev libdrm-dev libglew-dev libopenal-dev libsndfile-dev libcairo2-dev libfreetype6-dev libssl-dev libpulse-dev libusb-1.0-0-dev libgtk${GTK_VERSION}-dev libopencv-dev libassimp-dev librtaudio-dev libglfw3-dev liburiparser-dev libcurl4-openssl-dev libpugixml-dev brotli
 exit_code=$?
 if [ $exit_code != 0 ]; then
     echo "error installing dependencies, there could be an error with your internet connection"
@@ -92,15 +93,15 @@ if [ $GCC_MAJOR_GT_4 -eq 1 ]; then
     ./apothecary -j${cores} update poco
 fi
 
-# Update addon_config.mk files to use OpenCV 3 or 4 depending on what's installed
+# Update addon_config.mk files to use OpenCV 3, 4 or 5 depending on what's installed
 addons_dir="$(readlink -f "$ROOT/../../../addons")"
-$(pkg-config opencv4 --exists)
-exit_code=$?
-if [ $exit_code != 0 ]; then
-	echo "Updating ofxOpenCV to use openCV3"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv4(.*)$/ADDON_PKG_CONFIG_LIBRARIES =\1opencv\2/' "$addons_dir/ofxOpenCv/addon_config.mk"
-else
+if pkg-config opencv5 --exists; then
+	echo "Updating ofxOpenCV to use openCV5"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv5/' "$addons_dir/ofxOpenCv/addon_config.mk"
+elif pkg-config opencv4 --exists; then
 	echo "Updating ofxOpenCV to use openCV4"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv\s/ADDON_PKG_CONFIG_LIBRARIES =\1opencv4 /g' "$addons_dir/ofxOpenCv/addon_config.mk"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv$/ADDON_PKG_CONFIG_LIBRARIES =\1opencv4/g' "$addons_dir/ofxOpenCv/addon_config.mk"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv4/' "$addons_dir/ofxOpenCv/addon_config.mk"
+else
+	echo "Updating ofxOpenCV to use openCV3"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv/' "$addons_dir/ofxOpenCv/addon_config.mk"
 fi

@@ -1,5 +1,4 @@
-#ifndef OF_MAIN_H
-#define OF_MAIN_H
+#pragma once
 
 //--------------------------
 // utils
@@ -81,9 +80,9 @@
 #include "ofWindowSettings.h"
 #if !defined(TARGET_OF_IOS) & !defined(TARGET_ANDROID) & !defined(TARGET_EMSCRIPTEN) & !defined(TARGET_RASPBERRY_PI_LEGACY)
     #include "ofAppGLFWWindow.h"
-    #if !defined(TARGET_LINUX_ARM)
-        #include "ofAppGlutWindow.h"
-    #endif
+//    #if !defined(TARGET_LINUX_ARM)
+//        #include "ofAppGlutWindow.h"
+//    #endif
 #endif
 
 //--------------------------
@@ -116,8 +115,8 @@
 using namespace std;
 #else
 
-    // this will eventually be disabled by default
-    #define OF_USE_MINIMAL_STD
+// this will eventually be disabled by default
+#define OF_USE_MINIMAL_STD
     #ifdef OF_USE_MINIMAL_STD
 using std::cout;
 using std::deque;
@@ -136,4 +135,14 @@ using std::weak_ptr;
     #endif
 #endif
 
-#endif // OF_MAIN_H
+
+// core: ---------------------------
+#include <stdint.h>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <cstring>
+#include <iostream>
+#include <vector>
+#include <memory>
+#include <functional>

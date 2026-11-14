@@ -1,10 +1,16 @@
 #pragma once
 
-#define GLM_FORCE_CTOR_INIT
-#include "glm/gtx/wrap.hpp"
-#include <typeinfo>
+#if !defined(GLM_FORCE_CTOR_INIT)
+	#define GLM_FORCE_CTOR_INIT
+#endif
+#if !defined(GLM_ENABLE_EXPERIMENTAL)
+	#define GLM_ENABLE_EXPERIMENTAL
+#endif
+#include <glm/ext/scalar_common.hpp>
+#include <glm/vec3.hpp>
 #include <iostream>
 #include <limits>
+#include <vector>
 
 /// \class ofColor_
 ///
@@ -24,10 +30,10 @@ public:
 
     /// \brief Construct a default white color.
     ofColor_():
-        r(limit()),
-        g(limit()),
-        b(limit()),
-        a(limit()) {};
+        r(static_cast<PixelType>(limit())),
+        g(static_cast<PixelType>(limit())),
+        b(static_cast<PixelType>(limit())),
+        a(static_cast<PixelType>(limit())) {};
 
     /// \brief Construct an ofColor_ by using channel values.
     ///
@@ -36,6 +42,20 @@ public:
     /// \param blue The blue component.
     /// \param alpha The alpha component.
     ofColor_(float red, float green, float blue, float alpha = limit());
+
+    /// \brief Construct an ofColor_ by using values in a vector
+    ///
+    /// \param list 1 item = The gray value (full alpha)
+    /// \param list 2 items = The gray value + alpha
+    /// \param list 3 items = The RGB values (full alpha)
+    /// \param list 4 items = The RGB values + alpha
+    template<class InitType>
+    ofColor_(std::vector<InitType> list): ofColor_() {
+        if (list.size() == 1) set(list[0]);
+        if (list.size() == 2) set(list[0], list[1]);
+        if (list.size() == 3) set(list[0], list[1], list[2]);
+        if (list.size() == 4) set(list[0], list[1], list[2], list[3]);
+    }
 
     /// \brief Construct a grayscale ofColor_ by specifying a single number.
     ///
@@ -162,7 +182,13 @@ public:
                 float saturation,
                 float brightness,
                 float alpha = limit());
-
+	void setHsb(glm::vec3 hsb) {
+		setHsb(hsb.x, hsb.y, hsb.z);
+	}
+	void setNormalizedHsb(glm::vec3 hsb) {
+		hsb *= limit();
+		setHsb(hsb.x, hsb.y, hsb.z);
+	}
     /// \}
 
     /// \name Modifiers
@@ -303,6 +329,22 @@ public:
     /// \param brightness A reference to the brightness to fill. Will be in the
     ///     range of 0 - limit().
     void getHsb(float& hue, float& saturation, float& brightness) const;
+	
+	/// \brief Extract the hue, saturation and brightness (HSB) from this color.
+	///
+	/// \returns the 3 color-native values in a glm::vec3
+	glm::vec3 getHsb() const {
+		float h, s, b;
+		getHsb(h,s,b);
+		return { h, s, b };
+	}
+
+	/// \brief Extract the hue, saturation and brightness (HSB) from this color.
+	///
+	/// \returns the 3 values normalized 0-1 in a glm::vec3
+	glm::vec3 getNormalizedHsb() const {
+		return getHsb()/limit();
+	}
 
     /// \brief Get the maximum value of a color component.
     ///
@@ -549,16 +591,16 @@ public:
 		if(sizeof(PixelType) == 1) {
 			int component;
 			is >> std::skipws >> component;
-			color.r = component;
+			color.r = static_cast<PixelType>(component);
 			is.ignore(1);
 			is >> std::skipws >> component;
-			color.g = component;
+			color.g = static_cast<PixelType>(component);
 			is.ignore(1);
 			is >> std::skipws >> component;
-			color.b = component;
+			color.b = static_cast<PixelType>(component);
 			is.ignore(1);
 			is >> std::skipws >> component;
-			color.a = component;
+			color.a = static_cast<PixelType>(component);
 		}else{
 			is >> std::skipws >> color.r;
 			is.ignore(1);
@@ -662,12 +704,13 @@ void ofColor_<PixelType>::copyFrom(const ofColor_<SrcType> & mom){
 	if(typeid(SrcType) == typeid(float) || typeid(SrcType) == typeid(double)) {
 		// coming from float we need a special case to clamp the values
 		for(int i = 0; i < 4; i++){
-			v[i] = glm::clamp(float(mom[i]), 0.f, 1.f) * factor;
+			// FIXME: replace by std::clamp when it is exclusive C++17
+			v[i] = static_cast<PixelType>(glm::clamp(float(mom[i]), 0.f, 1.f) * factor);
 		}
 	} else{
 		// everything else is a straight scaling
 		for(int i = 0; i < 4; i++){
-			v[i] = mom[i] * factor;
+			v[i] = static_cast<PixelType>(mom[i] * factor);
 		}
 	}
 }
@@ -679,7 +722,7 @@ ofColor_<PixelType> operator*(float val, const ofColor_<PixelType> &color) {
 
 template<typename PixelType>
 inline float ofColor_<PixelType>::limit() {
-	return std::numeric_limits<PixelType>::max();
+	return static_cast<float>(std::numeric_limits<PixelType>::max());
 }
 
 template<>
@@ -705,14 +748,14 @@ inline void ofColor_<unsigned char>::setHex(int hexColor, float alpha){
 	r = (hexColor >> 16) & 0xff;
 	g = (hexColor >> 8) & 0xff;
 	b = (hexColor >> 0) & 0xff;
-	a = alpha;
+	a = static_cast<unsigned char>(alpha);
 }
 
 template<typename PixelType>
 inline void ofColor_<PixelType>::setHex (int hexColor, float alpha){
 	ofColor c = ofColor::fromHex(hexColor);
 	*this = c;
-	a = alpha;
+	a = static_cast<PixelType>(alpha);
 }
 
 

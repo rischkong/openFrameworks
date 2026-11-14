@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# FreeImage is supplied by Apothecary via scripts/linux/download_libs.sh.
 
 ## thanks to Claudio for details on packages to install on fedora
 if [ $EUID != 0 ]; then
@@ -14,7 +15,21 @@ ROOT=$(cd $(dirname $0); pwd -P)
 
 # on older Fedora installs you might need to also do:
 # dnf install jack-audio-connection-kit-dbus
-dnf install freeglut-devel alsa-lib-devel libXmu-devel libXxf86vm-devel gcc-c++ libraw1394-devel gstreamer1-devel gstreamer1-plugins-base-devel libudev-devel libtheora-devel libvorbis-devel openal-soft-devel libsndfile-devel python-lxml glew-devel flac-devel freeimage-devel cairo-devel pulseaudio-libs-devel openssl-devel libusbx-devel gtk2-devel libXrandr-devel libXi-devel opencv-devel libX11-devel assimp-devel rtaudio-devel boost-devel gtk3-devel glfw-devel uriparser-devel curl-devel pugixml-devel poco-devel
+dnf install -y \
+  freeglut-devel alsa-lib-devel libXmu-devel libXxf86vm-devel gcc-c++ \
+  libraw1394-devel gstreamer1-devel gstreamer1-plugins-base-devel \
+  libudev-devel libtheora-devel libvorbis-devel openal-soft-devel \
+  libsndfile-devel python3-lxml glew-devel flac-devel \
+  cairo-devel pulseaudio-libs-devel openssl-devel libusbx-devel \
+  gtk2-devel libXrandr-devel libXi-devel opencv-devel libX11-devel \
+  assimp-devel rtaudio-devel gtk3-devel glfw-devel uriparser-devel \
+  curl-devel pugixml-devel poco-devel brotli \
+  wayland-devel wayland-protocols-devel \
+  libxkbcommon-devel libxkbcommon-x11-devel \
+  libdecor-devel xorg-x11-proto-devel \
+  mesa-libGL-devel mesa-libGLU-devel mesa-libEGL-devel mesa-libGLES-devel \
+  libXcursor-devel libXinerama-devel libXext-devel \
+  fftw-devel xorg-x11-server-Xwayland mesa-dri-drivers libdecor ccache
 
 exit_code=$?
 if [ $exit_code != 0 ]; then
@@ -22,15 +37,25 @@ if [ $exit_code != 0 ]; then
 	exit $exit_code
 fi
 
-# Update addon_config.mk files to use OpenCV 3 or 4 depending on what's installed
-addons_dir="$(readlink -f "$ROOT/../../../addons")"
-$(pkg-config opencv4 --exists)
-exit_code=$?
-if [ $exit_code != 0 ]; then
-	echo "Updating ofxOpenCV to use openCV3"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv4(.*)$/ADDON_PKG_CONFIG_LIBRARIES =\1opencv\2/' "$addons_dir/ofxOpenCv/addon_config.mk"
+# Optional: gum (nicer of.sh interactive menu) — only if already in dnf's repos.
+# Not in default Fedora repos as of writing; we don't add third-party repos
+# automatically. If you want it, see https://github.com/charmbracelet/gum#installation
+if dnf list --available gum &>/dev/null; then
+	echo "Package gum is available. Installing..."
+	dnf install -y gum
 else
+	echo "gum not found in configured dnf repos - skipping (optional, used for of.sh's nicer interactive menu)"
+fi
+
+# Update addon_config.mk files to use OpenCV 3, 4 or 5 depending on what's installed
+addons_dir="$(readlink -f "$ROOT/../../../addons")"
+if pkg-config opencv5 --exists; then
+	echo "Updating ofxOpenCV to use openCV5"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv5/' "$addons_dir/ofxOpenCv/addon_config.mk"
+elif pkg-config opencv4 --exists; then
 	echo "Updating ofxOpenCV to use openCV4"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv\s/ADDON_PKG_CONFIG_LIBRARIES =\1opencv4 /g' "$addons_dir/ofxOpenCv/addon_config.mk"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv$/ADDON_PKG_CONFIG_LIBRARIES =\1opencv4/g' "$addons_dir/ofxOpenCv/addon_config.mk"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv4/' "$addons_dir/ofxOpenCv/addon_config.mk"
+else
+	echo "Updating ofxOpenCV to use openCV3"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv/' "$addons_dir/ofxOpenCv/addon_config.mk"
 fi

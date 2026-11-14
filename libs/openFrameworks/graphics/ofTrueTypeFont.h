@@ -1,11 +1,14 @@
 #pragma once
 
+// MARK: optimization opportunity: unique pointer and remove ofMesh, ofPixels, ofRectangle, ofTexture
 #include "ofMesh.h"
-#include "ofPath.h"
-#include "ofPixels.h"
+#include "ofPixels.h" // Glyph ofPixels pixels
 #include "ofRectangle.h"
 #include "ofTexture.h"
 #include <unordered_map>
+#include <vector>
+
+class ofPath;
 
 /// \file
 /// The ofTrueTypeFont class provides an interface to load fonts into
@@ -201,13 +204,25 @@ public:
 		float simplifyAmt = 0.0f,
 		int dpi = 0);
 
-	OF_DEPRECATED_MSG("Use load instead", bool loadFont(std::string filename, int fontsize, bool _bAntiAliased = true, bool _bFullCharacterSet = false, bool makeContours = false, float simplifyAmt = 0.0f, int dpi = 0));
+	[[deprecated("Use load")]]
+	bool loadFont(const of::filesystem::path & filename, int fontsize, bool _bAntiAliased = true, bool _bFullCharacterSet = false, bool makeContours = false, float simplifyAmt = 0.0f, int dpi = 0);
 
 	bool load(const ofTrueTypeFontSettings & settings);
 
 	/// \brief Has the font been loaded successfully?
 	/// \returns true if the font was loaded.
 	bool isLoaded() const;
+	
+	/// \brief Turns on or off the allocation and use of a texture.
+	///
+	/// \param bUse Allocate and use a texture or not.
+	void setUseTexture(bool bUse);
+	
+	/// \brief Returns whether the ofTrueTypeFont has a texture or not.
+	///
+	/// If the ofTrueTypeFont doesn't have a texture, nothing will be drawn to the screen.
+	/// \returns true if the ofTrueTypeFont is using a texture.
+	bool isUsingTexture() const;
 
 	/// \}
 	/// \name Font Settings
@@ -359,6 +374,10 @@ public:
 	std::vector<ofPath> getStringAsPoints(const std::string & str, bool vflip = true, bool filled = true) const;
 	const ofMesh & getStringMesh(const std::string & s, float x, float y, bool vflip = true) const;
 	const ofTexture & getFontTexture() const;
+	/// \brief The glyph atlas the font texture is made from (OF_PIXELS_GRAY_ALPHA),
+	/// kept on the CPU after load(): empty if the font isn't loaded.
+	const ofPixels & getFontAtlasPixels() const;
+	// FIXME: Maybe return a const & so texture is not copied?
 	ofTexture getStringTexture(const std::string & s, bool vflip = true) const;
 	glm::vec2 getFirstGlyphPosForTexture(const std::string & str, bool vflip) const;
 	bool isValidGlyph(uint32_t) const;
@@ -385,6 +404,7 @@ protected:
 	/// \cond INTERNAL
 
 	bool bLoadedOk;
+	bool bUseTexture;
 
 	std::vector<ofPath> charOutlines;
 	std::vector<ofPath> charOutlinesNonVFlipped;
@@ -431,6 +451,7 @@ protected:
 	size_t indexForGlyph(uint32_t glyph) const;
 
 	ofTexture texAtlas;
+	ofPixels atlasPixels;
 	mutable ofMesh stringQuads;
 
 	/// \endcond

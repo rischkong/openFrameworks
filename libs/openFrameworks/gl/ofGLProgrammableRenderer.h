@@ -1,13 +1,14 @@
 #pragma once
 
 #include "ofGLBaseTypes.h"
-#include "ofPolyline.h"
 #include "ofShader.h"
-#include "ofMatrixStack.h"
 #include "of3dGraphics.h"
+// MARK: Optimization pointers in next four objects
+#include "ofMatrixStack.h"
+#include "ofPolyline.h"
 #include "ofBitmapFont.h"
 #include "ofPath.h"
-//#include "ofMaterialBaseTypes.h"
+#include "ofVbo.h"
 
 class ofShapeTessellation;
 class ofFbo;
@@ -22,6 +23,8 @@ public:
 
     static const std::string TYPE;
 	const std::string & getType(){ return TYPE; }
+	
+	int getMaxTextureSize();
     
     void startRender();
     void finishRender();
@@ -44,6 +47,8 @@ public:
 	void drawElementsInstanced(const ofVbo & vbo, GLuint drawMode, int amt, int primCount) const;
 	void draw(const ofVboMesh & mesh, ofPolyRenderMode renderType) const;
 	void drawInstanced(const ofVboMesh & mesh, ofPolyRenderMode renderType, int primCount) const;
+	void drawBackgroundGradient(const ofFloatColor& start, const ofFloatColor& end, ofGradientMode mode) const;
+	
     ofPath & getPath();
     
     
@@ -124,13 +129,25 @@ public:
 	void setRectMode(ofRectMode mode);
 	ofRectMode getRectMode();
 	void setLineWidth(float lineWidth);
+	void setPointSize(float pointSize);
 	void setDepthTest(bool depthTest);
+	void setDepthWrite(bool write);
 	void setLineSmoothing(bool smooth);
 	void setBlendMode(ofBlendMode blendMode);
 	void enablePointSprites();
 	void disablePointSprites();
 	void enableAntiAliasing();
 	void disableAntiAliasing();
+	
+	/// \brief Enable size attenuation for line widths. Width changes based on distance from camera.
+	void enableLineSizeAttenuation();
+	/// \brief Disable size attenuation for line widths. Consistent width based on pixels in screen space (default).
+	void disableLineSizeAttenuation();
+	/// \brief Enable OF's line shaders for rendering lines of varying widths, set by ofSetLineWidth( width ); (default).
+	void enableLinesShaders();
+	/// \brief Disable OF's line shaders to enable openGL rendering. Does not support varying line widths.
+	void disableLinesShaders();
+	bool areLinesShadersEnabled() const;
     
 	// color options
 	void setColor(float r, float g, float b); // 0-1
@@ -193,7 +210,7 @@ public:
 	void unbind(const ofCamera & camera);
 
 	void bind(const ofFbo & fbo);
-#ifndef TARGET_OPENGLES
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 	void bindForBlitting(const ofFbo & fboSrc, ofFbo & fboDst, int attachmentPoint);
 #endif
 	void unbind(const ofFbo & fbo);
@@ -245,11 +262,51 @@ private:
 
 
 	ofPolyline circlePolyline;
-	mutable ofMesh circleMesh;
+	ofPolyline circleOutlinePolyline;
+	mutable ofMesh circleMesh, circleOutlineMesh;
 	mutable ofMesh triangleMesh;
 	mutable ofMesh rectMesh;
 	mutable ofMesh lineMesh;
 	mutable ofVbo meshVbo;
+	mutable ofMesh polylineMesh;
+
+	// when adding more draw modes, POINTS, LINES, etc.
+	// store in a structure so we don't have to create a lot of variables
+	// this structure if based on the one from ofMaterial
+	class ShaderCollection {
+	public:
+		void bindAttribute( GLuint location, const std::string & name );
+		void bindDefaults();
+		void linkPrograms();
+		void setupAllVertexShaders(const std::string &aShaderSrc);
+
+		ofShader texRectColor;
+		ofShader texRectNoColor;
+		ofShader tex2DColor;
+		ofShader tex2DNoColor;
+		ofShader noTexColor;
+		ofShader noTexNoColor;
+	};
+	
+	// useful for lines //
+	class LinesBundle {
+	public:
+		void setMeshDataToVbo();
+		std::vector<glm::vec4> lineMeshNextVerts;
+		std::vector<glm::vec4> lineMeshPrevVerts;
+		ofVbo vbo;
+		ofMesh mesh;
+		int vertAttribPrev = 4;
+		int vertAttribNext = 5;
+	};
+
+	struct TextureUniform {
+		ofTextureData texData;
+		// nh: not going to store a texture since we don't want to retain the texture here
+		// ofTexture texture;
+		int textureLocation;
+		std::string uniformName;
+	};
 
 	void uploadCurrentMatrix();
 
@@ -258,12 +315,20 @@ private:
 	void endSmoothing();
 
 	void beginDefaultShader();
+	std::shared_ptr<ShaderCollection>& getShaderCollectionForMode(GLuint drawMode);
 	void uploadMatrices();
 	void setDefaultUniforms();
 
-	void setAttributes(bool vertices, bool color, bool tex, bool normals);
+	// adding a drawMode variable that will switch shaders based on GL_TRIANGLES, GL_POINTS or GL_LINES
+	void setAttributes(bool vertices, bool color, bool tex, bool normals, GLuint drawMode);
+//	void setAttributes(bool vertices, bool color, bool tex, bool normals);
 	void setAlphaBitmapText(bool bitmapText);
-
+	
+	
+	// LINES
+	void configureMeshToMatchWithNewVertsAndIndices(const ofMesh& aSrcMesh, ofMesh& aDstMesh, std::size_t aTargetNumVertices, std::size_t aTargetNumIndices);
+	void configureLinesBundleFromMesh(LinesBundle& aLinesBundle, GLuint drawMode, const ofMesh& amesh);
+	
     
 	ofMatrixStack matrixStack;
 
@@ -273,6 +338,7 @@ private:
 	const ofShader * currentShader;
 
 	bool verticesEnabled, colorsEnabled, texCoordsEnabled, normalsEnabled, bitmapStringEnabled;
+	bool pointSpritesEnabled;
 	bool usingCustomShader, settingDefaultShader, usingVideoShader;
 	int currentTextureTarget;
 
@@ -293,13 +359,23 @@ private:
 	ofBitmapFont bitmapFont;
 	ofPath path;
 	const ofAppBaseWindow * window;
+	
+	mutable GLuint mDrawMode = GL_TRIANGLES;
+	std::unordered_map<GLuint, LinesBundle> mLinesBundleMap;
+	mutable bool mBRenderingLines = false;
+	mutable bool mBLineSizeAttenutation = false; // screen space
+	mutable bool mBEnableLinesShaders = true;
 
-	ofShader defaultTexRectColor;
-	ofShader defaultTexRectNoColor;
-	ofShader defaultTex2DColor;
-	ofShader defaultTex2DNoColor;
-	ofShader defaultNoTexColor;
-	ofShader defaultNoTexNoColor;
+	//	the index GL_TRIANGLES store everything that is not GL_POINTS or GL_LINES, GL_LINE_STRIP
+	std::unordered_map<GLuint, std::shared_ptr<ShaderCollection> > mDefaultShadersMap;
+	std::vector<TextureUniform> mUniformsTex;
+
+	//	ofShader defaultTexRectColor;
+	//	ofShader defaultTexRectNoColor;
+	//	ofShader defaultTex2DColor;
+	//	ofShader defaultTex2DNoColor;
+	//	ofShader defaultNoTexColor;
+	//	ofShader defaultNoTexNoColor;
 	ofShader defaultUniqueShader;
 #ifdef TARGET_ANDROID
 	ofShader defaultOESTexColor;

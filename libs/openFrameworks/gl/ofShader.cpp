@@ -1,20 +1,14 @@
 #include "ofBufferObject.h"
 #include "ofCubeMap.h"
-#include "ofFileUtils.h"
 #include "ofGLProgrammableRenderer.h"
-#include "ofGraphics.h"
 #include "ofLight.h"
-#include "ofMatrix3x3.h"
-#include "ofMatrix4x4.h"
-#include "ofParameter.h"
 #include "ofShader.h"
 #include "ofShadow.h"
-#include "ofTexture.h"
-#include "ofUtils.h"
 #ifdef TARGET_ANDROID
     #include "ofxAndroidUtils.h"
 #endif
 #include <regex>
+#include <vector>
 
 using std::endl;
 using std::ostringstream;
@@ -89,7 +83,7 @@ static void releaseProgram(GLuint id) {
     }
 }
 
-#if !defined(TARGET_OPENGLES) || defined(TARGET_EMSCRIPTEN)
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 //--------------------------------------------------------------
 ofShader::TransformFeedbackRangeBinding::TransformFeedbackRangeBinding(const ofBufferObject & buffer, GLuint offset, GLuint size)
     : offset(offset)
@@ -198,7 +192,12 @@ ofShader & ofShader::operator=(ofShader && mom) {
 
 //--------------------------------------------------------------
 bool ofShader::load(const of::filesystem::path & shaderName) {
-    return load(shaderName.string() + ".vert", shaderName.string() + ".frag");
+	auto vertFile = shaderName;
+	auto fragFile = shaderName;
+	vertFile += ".vert";
+	fragFile += ".frag";
+//    return load(shaderName + ".vert", shaderName + ".frag");
+	return load(vertFile, fragFile);
 }
 
 //--------------------------------------------------------------
@@ -214,7 +213,7 @@ bool ofShader::load(const of::filesystem::path & vertName, const of::filesystem:
     return linkProgram();
 }
 
-#if !defined(TARGET_OPENGLES) && defined(glDispatchCompute)
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_1) && defined(TARGET_OPENGLES_3) && defined(glDispatchCompute))
 //--------------------------------------------------------------
 bool ofShader::loadCompute(const of::filesystem::path & shaderName) {
     return setupShaderFromFile(GL_COMPUTE_SHADER, shaderName) && linkProgram();
@@ -252,7 +251,7 @@ bool ofShader::setup(const ofShaderSettings & settings) {
     return linkProgram();
 }
 
-#if !defined(TARGET_OPENGLES) || defined(TARGET_EMSCRIPTEN)
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 //--------------------------------------------------------------
 bool ofShader::setup(const TransformFeedbackSettings & settings) {
     for (auto shader : settings.shaderFiles) {
@@ -327,7 +326,7 @@ ofShader::Source ofShader::sourceFromFile(GLenum type, const of::filesystem::pat
 
 //--------------------------------------------------------------
 // FIXME: change to of::filesystem
-bool ofShader::setupShaderFromSource(GLenum type, string source, string sourceDirectoryPath) {
+bool ofShader::setupShaderFromSource(GLenum type, string source, of::filesystem::path sourceDirectoryPath) {
     return setupShaderFromSource({ type, source, sourceDirectoryPath });
 }
 
@@ -425,16 +424,16 @@ bool ofShader::setupShaderFromSource(ofShader::Source && source) {
 
 //--------------------------------------------------------------
 string ofShader::parseForIncludes(const string & source, const of::filesystem::path & sourceDirectoryPath) {
-    vector<string> included;
+    vector<of::filesystem::path> included;
     return parseForIncludes(source, included, 0, sourceDirectoryPath);
 }
 
 //--------------------------------------------------------------
 // FIXME: update to use fs::path in vector and source
-string ofShader::parseForIncludes(const string & source, vector<string> & included, int level, const of::filesystem::path & sourceDirectoryPath) {
+string ofShader::parseForIncludes(const string & source, vector<of::filesystem::path> & included, int level, const of::filesystem::path & sourceDirectoryPath) {
 
     if (level > 32) {
-        ofLogError("ofShader", "glsl header inclusion depth limit reached, might be caused by cyclic header inclusion");
+        ofLogError("ofShader") << "glsl header inclusion depth limit reached, might be caused by cyclic header inclusion";
         return "";
     }
 
@@ -498,28 +497,24 @@ string ofShader::parseForIncludes(const string & source, vector<string> & includ
 
         // --------| invariant: '#pragma include' has been requested
 
-        if (std::find(included.begin(), included.end(), include) != included.end()) {
+		of::filesystem::path includeFS { sourceDirectoryPath / include };
+		of::filesystem::path includeFSAbsolute { of::filesystem::absolute(includeFS) };
+
+        if (std::find(included.begin(), included.end(), includeFSAbsolute) != included.end()) {
             ofLogVerbose("ofShader") << include << " already included";
             continue;
         }
 
         // we store the absolute paths so as have (more) unique file identifiers.
-        // FIXME: Included can be a vector of of::filesystem::path in near future
-        include = ofFile(
-            sourceDirectoryPath / include
-            // ).getAbsolutePath().string();
-            )
-                      .getAbsolutePath();
+        included.push_back(includeFSAbsolute);
 
-        included.push_back(include);
-
-        ofBuffer buffer = ofBufferFromFile(include);
+        ofBuffer buffer { ofBufferFromFile(includeFS) };
         if (!buffer.size()) {
-            ofLogError("ofShader") << "Could not open glsl include file " << include;
+            ofLogError("ofShader") << "Could not open glsl include file " << includeFS;
             continue;
         }
 
-        auto currentDir = ofFile(include).getEnclosingDirectory();
+		auto currentDir = includeFS.parent_path();
         output << parseForIncludes(buffer.getText(), included, level + 1, currentDir) << endl;
     }
 
@@ -856,7 +851,7 @@ void ofShader::end() const {
     ofGetGLRenderer()->unbind(*this);
 }
 
-#if !defined(TARGET_OPENGLES) || defined(TARGET_EMSCRIPTEN)
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 //--------------------------------------------------------------
 void ofShader::beginTransformFeedback(GLenum mode) const {
     begin();
@@ -928,7 +923,7 @@ void ofShader::endTransformFeedback(const std::vector<TransformFeedbackBaseBindi
 }
 #endif
 
-#if !defined(TARGET_OPENGLES) && defined(glDispatchCompute)
+#if !defined(TARGET_OPENGLES) || (defined(TARGET_OPENGLES_3) && defined(glDispatchCompute) && defined(GL_ES_VERSION_3_1))
 //--------------------------------------------------------------
 void ofShader::dispatchCompute(GLuint x, GLuint y, GLuint z) const {
     glDispatchCompute(x, y, z);
@@ -956,10 +951,19 @@ void ofShader::setUniformTexture(const string & name, int textureTarget, GLint t
     }
 }
 
+
 //--------------------------------------------------------------
 void ofShader::setUniformTexture(const string & name, const ofTexture & tex, int textureLocation) const {
+	if (bLoaded) {
+		ofTextureData texData = tex.getTextureData();
+		setUniformTexture( name, texData, textureLocation);
+	}
+}
+
+//--------------------------------------------------------------
+void ofShader::setUniformTexture(const string & name, const ofTextureData & texData, int textureLocation) const{
     if (bLoaded) {
-        ofTextureData texData = tex.getTextureData();
+        //ofTextureData texData = tex.getTextureData();
         glActiveTexture(GL_TEXTURE0 + textureLocation);
         if (!ofIsGLProgrammableRenderer()) {
             glEnable(texData.textureTarget);
@@ -1060,6 +1064,11 @@ void ofShader::setUniform3f(const string & name, const glm::vec3 & v) const {
 //--------------------------------------------------------------
 void ofShader::setUniform4f(const string & name, const glm::vec4 & v) const {
     setUniform4f(name, v.x, v.y, v.z, v.w);
+}
+
+//--------------------------------------------------------------
+void ofShader::setUniform3f(const string & name, const ofFloatColor & v) const {
+	setUniform3f(name, v.r, v.g, v.b);
 }
 
 //--------------------------------------------------------------
@@ -1461,9 +1470,9 @@ bool ofShader::setShadowUniforms(int textureLocation) const {
     setUniformTexture("uShadowMapSpot", ofShadow::getTextureTarget(OF_LIGHT_SPOT), ofShadow::getSpotTexId(), textureLocation + 2);
     setUniformTexture("uShadowMapArea", ofShadow::getTextureTarget(OF_LIGHT_AREA), ofShadow::getAreaTexId(), textureLocation + 3);
 
-    for (size_t i = 0; i < ofShadowsData().size(); i++) {
+    for (size_t i = 0; i < ofShadow::getShadowsData().size(); i++) {
         std::string idx = ofToString(i, 0);
-        std::shared_ptr<ofShadow::Data> shadow = ofShadowsData()[i].lock();
+        auto shadow = ofShadow::getShadowsData()[i].lock();
         std::string shadowAddress = "shadows[" + idx + "]";
         if (!shadow || !shadow->isEnabled || shadow->index < 0) {
             setUniform1f(shadowAddress + ".enabled", 0);
@@ -1500,7 +1509,7 @@ bool ofShader::setPbrEnvironmentMapUniforms(int textureLocation) const {
         return false;
     }
 
-    std::shared_ptr<ofCubeMap::Data> cubeMapData = ofCubeMap::getActiveData();
+    auto cubeMapData = ofCubeMap::getActiveData();
     if (cubeMapData) {
         if (cubeMapData->bIrradianceAllocated) {
             setUniformTexture("tex_irradianceMap", GL_TEXTURE_CUBE_MAP, cubeMapData->irradianceMapId, textureLocation);
@@ -1547,14 +1556,14 @@ string ofShader::nameForType(GLenum type) {
         return "GL_VERTEX_SHADER";
     case GL_FRAGMENT_SHADER:
         return "GL_FRAGMENT_SHADER";
-#ifndef TARGET_OPENGLES
-    case GL_GEOMETRY_SHADER_EXT:
-        return "GL_GEOMETRY_SHADER_EXT";
-    #ifdef glDispatchCompute
-    case GL_COMPUTE_SHADER:
-        return "GL_COMPUTE_SHADER";
+    #ifndef TARGET_OPENGLES
+        case GL_GEOMETRY_SHADER_EXT:
+        	return "GL_GEOMETRY_SHADER_EXT";
     #endif
-#endif
+    #if (!defined(TARGET_OPENGLES) && defined(glDispatchCompute)) || defined(GL_ES_VERSION_3_1)
+        case GL_COMPUTE_SHADER:
+        	return "GL_COMPUTE_SHADER";
+    #endif
     default:
         return "UNKNOWN SHADER TYPE";
     }

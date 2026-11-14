@@ -48,7 +48,7 @@ void ofApp::setup() {
 void ofApp::update() {
 	glm::vec2 mouse(ofGetMouseX(), ofGetMouseY());
 	glm::vec2 mouseVec(ofGetPreviousMouseX()-ofGetMouseX(), ofGetPreviousMouseY()-ofGetMouseY());
-	glm::clamp(mouseVec, 0.0f, 10.0f);
+	(void)glm::clamp(mouseVec, 0.0f, 10.0f);
 
 	
 	for (int i=0; i<NUM_BILLBOARDS; i++) {
@@ -74,7 +74,7 @@ void ofApp::update() {
 		}
 		
 		// get the 2d heading
-		float angle = (float)atan2(-vel[i].y, vel[i].x) + PI;
+		float angle = std::atan2(-vel[i].y, vel[i].x) + glm::pi<float>();
 		rotations[i] = (angle * -1.0);
 	}
 }

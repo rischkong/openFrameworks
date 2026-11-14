@@ -60,17 +60,17 @@ common:
 	# a specific platform
 	# ADDON_LIBS_EXCLUDE =
 
-linuxarmv6l:
+linux/armv6l:
 	ADDON_PKG_CONFIG_LIBRARIES = assimp
 	ADDON_LIBS_EXCLUDE = libs/assimp
 	ADDON_INCLUDES_EXCLUDE = libs/assimp/%
 
-linuxarmv7l:
+linux/armv7l:
 	ADDON_PKG_CONFIG_LIBRARIES = assimp
 	ADDON_LIBS_EXCLUDE = libs/assimp
 	ADDON_INCLUDES_EXCLUDE = libs/assimp/%
 
-linuxaarch64:
+linux/aarch64:
 	ADDON_PKG_CONFIG_LIBRARIES = assimp
 	ADDON_LIBS_EXCLUDE = libs/assimp
 	ADDON_INCLUDES_EXCLUDE = libs/assimp/%
@@ -80,7 +80,7 @@ linux:
 	ADDON_LIBS_EXCLUDE = libs/assimp
 	ADDON_INCLUDES_EXCLUDE = libs/assimp/%
 
-linux64:
+linux/64:
 	ADDON_PKG_CONFIG_LIBRARIES = assimp
 	ADDON_LIBS_EXCLUDE = libs/assimp
 	ADDON_INCLUDES_EXCLUDE = libs/assimp/%
@@ -101,5 +101,10 @@ android/x86:
 	ADDON_LIBS+=libs/assimp/lib/android/x86/libIrrXML.a
 
 ios:
+	ADDON_INCLUDES_EXCLUDE = libs/assimp/include/%
+osx:
+	ADDON_INCLUDES_EXCLUDE = libs/assimp/include/%
+	
+emscripten:
 	ADDON_LIBS=
-	ADDON_LIBS=libs/assimp/lib/ios/assimp.a
+	ADDON_LIBS=libs/assimp/lib/emscripten/%/libassimp.a

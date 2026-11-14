@@ -6,11 +6,10 @@
 //
 
 #pragma once
-
+#include "ofxiOSConstants.h"
+#if defined(TARGET_OF_TVOS) && defined(OF_UI_KIT) && defined(TARGET_OF_IOS) && !defined(TARGET_OF_WATCHOS) && !defined(TARGET_OF_XROS)
 #ifndef ofxtvOSAppDelegate_h
 #define ofxtvOSAppDelegate_h
-
-
 #import <UIKit/UIKit.h>
 
 @class ofxtvOSViewController;
@@ -22,10 +21,11 @@
 @property (nonatomic, strong) UIWindow * window;
 @property (nonatomic, strong) UIViewController * uiViewController;
 
-- (BOOL)application:(UIApplication*)application
-      handleOpenURL:(NSURL*)url;
+- (BOOL)application:(UIApplication *)application
+            openURL:(NSURL *)url
+            options:(NSDictionary<UIApplicationOpenURLOptionsKey, id> *)options;
 
 
 @end
-
 #endif /* ofxtvOSAppDelegate_h */
+#endif

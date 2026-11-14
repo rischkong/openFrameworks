@@ -65,7 +65,7 @@ void ofApp::setup(){
 	light.setPosition(0.0, 3600, 600 );
 	light.lookAt( glm::vec3(0,0,0) );
 	light.getShadow().setEnabled(true);
-	light.getShadow().setGlCullingEnabled(true);
+	light.getShadow().setCullingEnabled(true);
 	light.getShadow().setStrength(0.2);
 	light.getShadow().setNearClip(200);
 	light.getShadow().setFarClip(7500);
@@ -123,7 +123,7 @@ void ofApp::draw(){
 	camera.begin();
 //	shader.begin();
 	//mesh.drawInstanced(OF_MESH_WIREFRAME,matrices.size());
-//	mesh.drawInstanced(OF_MESH_FILL,matrices.size());
+//	mesh.drawInstanced(OF_MESH_FILL,static_cast<int>(matrices.size()));
 	renderScene(false);
 	
 	light.draw();
@@ -145,7 +145,7 @@ void ofApp::renderScene(bool bShadowPass) {
 		shader.begin();
 	}
 	
-	mesh.drawInstanced(OF_MESH_FILL,matrices.size());
+	mesh.drawInstanced(OF_MESH_FILL,static_cast<int>(matrices.size()));
 	
 	if(bShadowPass) {
 		mDepthShader.end();

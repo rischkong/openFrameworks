@@ -12,6 +12,14 @@
 #include "ofUtils.h"
 #include "ofMath.h"
 #include "ofLog.h"
+#include "ofEvents.h"
+
+//#ifdef __OBJC__
+//	#import <Foundation/Foundation.h>
+//	#import <AVFoundation/AVFoundation.h>
+//	#import <Accelerate/Accelerate.h>
+//#endif
+
 
 //REFS: https://github.com/ooper-shlab/AVAEMixerSample-Swift/blob/master/AVAEMixerSample/AudioEngine.m
 // https://developer.apple.com/documentation/avfaudio/avaudioengine
@@ -239,7 +247,6 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
     self = [super init];
     if (self) {
 		[self setupSharedSession];
-		NSError * error = nil;
         
         _mainMixer = [[self engine] mainMixerNode];
 		_mainMixer.outputVolume = 0.98;
@@ -290,6 +297,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
         
         
         if (@available(iOS 14.5, *)) {
+            NSError *error = nil;
             if(![[AVAudioSession sharedInstance] setPrefersNoInterruptionsFromSystemAlerts:YES error:&error]) {
                 NSLog(@"Unable to setPrefersNoInterruptionsFromSystemAlerts: error %@, %@", error, [error userInfo]);
                 error = nil;
@@ -307,7 +315,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
                    /* pausing stops the audio engine and the audio hardware, but does not deallocate the resources allocated by prepare().
                       When your app does not need to play audio, you should pause or stop the engine (as applicable), to minimize power consumption.
                    */
-                    bool isPlaying = [weak_self isPlaying] || weak_self.bIsPlaying == YES;
+                    [[maybe_unused]] bool isPlaying = [weak_self isPlaying] || weak_self.bIsPlaying == YES;
                    if (!weak_self.isSessionInterrupted && !weak_self.isConfigChangePending) {
                        
                        
@@ -345,7 +353,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
            }
             
             
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.033f), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 33 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
                 [weak_self handleInterruption:note];
             });
             
@@ -359,8 +367,13 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
 }
 
 - (void) handleMediaServicesReset:(NSNotification *)notification {
+
     
-    NSUInteger interruptionType = [notification.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
+    [[maybe_unused]] NSUInteger interruptionType;
+    [[maybe_unused]] UInt8 reasonValue;
+#ifndef TARGET_OSX
+    interruptionType = [notification.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
+#endif
     
         NSLog(@"Media services have been reset!");
        NSLog(@"Re-wiring connections and starting once again");
@@ -382,16 +395,17 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
     
     
     [self startEngine];
-    
+
 }
 
 - (void) handleRouteChange:(NSNotification *)notification {
-    
-    NSUInteger interruptionType = [notification.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
-    
-    UInt8 reasonValue = [[notification.userInfo valueForKey:AVAudioSessionRouteChangeReasonKey] intValue];
-    
+
+    [[maybe_unused]] NSUInteger interruptionType;
+    UInt8 reasonValue = 0;
+
 #ifndef TARGET_OSX
+    interruptionType = [notification.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
+    reasonValue = [[notification.userInfo valueForKey:AVAudioSessionRouteChangeReasonKey] intValue];
         AVAudioSessionRouteDescription *routeDescription = [notification.userInfo valueForKey:AVAudioSessionRouteChangePreviousRouteKey];
 #endif
     
@@ -429,10 +443,10 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
 }
 
 - (void) handleInterruption:(NSNotification *)notification {
-    
+
+#ifndef TARGET_OSX
     NSUInteger interruptionType = [notification.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
 
-    
     NSLog(@"AVEnginePlayer::handleInterruption: notification:%@ %@ interruptionType: %lu", notification.name, notification.description, (unsigned long)interruptionType);
        
 
@@ -443,6 +457,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
         
         [self startEngine];
     }
+#endif
 
 }
 
@@ -507,7 +522,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
 - (void)endInterruption {
     NSLog(@"AVEnginePlayer::endInterruption");
     
-    NSError *error;
+    [[maybe_unused]] NSError *error;
 #ifndef TARGET_OSX
     bool success = [[AVAudioSession sharedInstance] setActive:YES error:&error];
     if (!success)
@@ -544,7 +559,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
             
         __typeof(self) __weak weak_self = self;
     
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.017f), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 17 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
                 weak_self.mRestorePlayCount--;
                 if(weak_self.bIsPlaying == NO) return;
                 [weak_self play:posSecs];
@@ -582,7 +597,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
         self.soundFile = nil;
 		return NO;
     }else{
-		NSLog(@"Sound file %@ loaded!", url);
+		//NSLog(@"Sound file %@ loaded!", url);
 	}
 	
 	return [self loadWithSoundFile:self.soundFile];
@@ -591,7 +606,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
 - (void)startEngine{
     
     NSError * error = nil;
-    BOOL engineRunning = NO;
+    [[maybe_unused]] BOOL engineRunning = NO;
     BOOL problem = NO;
     if( ![[self engine] isRunning] ){
         [[self engine] startAndReturnError:&error];
@@ -603,7 +618,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
             problem = YES;
             
         } else {
-            NSLog(@"Engine start successful");
+            //NSLog(@"Engine start successful");
             if(self.resetAudioEngine) {
 //                [self engineReset];
                 if(self.resetAudioEngine == NO)
@@ -709,7 +724,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
     }
     if(_isSessionInterrupted || _isConfigChangePending){
         __typeof(self) __weak weak_self = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.3f), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
             [weak_self play:startTime];
         });
         return;
@@ -836,11 +851,13 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
 }
 
 - (void)stop {
-    
-    __typeof(self) __weak weak_self = self;
+    if (!_bIsPlaying) {
+		return;
+	}
 
     if(_isSessionInterrupted || _isConfigChangePending){
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.3f), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            __typeof(self) __weak weak_self = self;
             [weak_self stop];
         });
         return;
@@ -856,6 +873,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
 
     self.startedSampleOffset = 0;
 }
+
 
 //----------------------------------------------------------- states.
 - (BOOL)isLoaded {
@@ -958,7 +976,7 @@ static NSString *kShouldEnginePauseNotification = @"kShouldEnginePauseNotificati
 
 - (int)positionMs {
 	float timeSeconds = [self positionSeconds];
-	return timeSeconds/1000.0;
+	return timeSeconds*1000.0;
 }
 
 - (float)positionSeconds{
@@ -996,12 +1014,12 @@ ofAVEngineSoundPlayer::~ofAVEngineSoundPlayer() {
     unload();
 }
 
-bool ofAVEngineSoundPlayer::load(const std::filesystem::path& fileName, bool stream) {
+bool ofAVEngineSoundPlayer::load(const of::filesystem::path & fileName, bool stream) {
     if(soundPlayer != NULL) {
         unload();
     }
 
-    string filePath = ofToDataPath(fileName);
+    auto filePath = ofToDataPath(fileName);
     @autoreleasepool {
         soundPlayer = [[AVEnginePlayer alloc] init];
     }

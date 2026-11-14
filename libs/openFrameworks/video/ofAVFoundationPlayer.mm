@@ -52,30 +52,31 @@ ofAVFoundationPlayer& ofAVFoundationPlayer::operator=(ofAVFoundationPlayer other
 }
 
 //--------------------------------------------------------------
-void ofAVFoundationPlayer::loadAsync(std::string name){
-    loadPlayer(name, true);
+void ofAVFoundationPlayer::loadAsync(const of::filesystem::path & fileName){
+    loadPlayer(fileName, true);
 }
 
 //--------------------------------------------------------------
-bool ofAVFoundationPlayer::load(std::string name) {
-    return loadPlayer(name, false);
+bool ofAVFoundationPlayer::load(const of::filesystem::path & fileName) {
+    return loadPlayer(fileName, false);
 }
 
 //--------------------------------------------------------------
-bool ofAVFoundationPlayer::loadPlayer(std::string name, bool bAsync) {
+bool ofAVFoundationPlayer::loadPlayer(const of::filesystem::path & fileName, bool bAsync) {
 	if( ofGetUsingArbTex() == false ){
         killTextureCache();
 		bUseTextureCache = false;
     }
 
-	NSString * videoPath = [NSString stringWithUTF8String:name.c_str()];
-	NSString * videoLocalPath = [NSString stringWithUTF8String:ofToDataPath(name).c_str()];
+	NSString * videoPath = [NSString stringWithUTF8String:fileName.c_str()];
+	NSString * videoLocalPath = [NSString stringWithUTF8String:ofToDataPath(fileName).c_str()];
 
 	BOOL bStream = NO;
 
-	bStream = bStream || (ofIsStringInString(name, "http://"));
-	bStream = bStream || (ofIsStringInString(name, "https://"));
-	bStream = bStream || (ofIsStringInString(name, "rtsp://"));
+    std::string fileNameStr { ofPathToString(fileName) };
+	bStream = bStream || (ofIsStringInString(fileNameStr, "http://"));
+	bStream = bStream || (ofIsStringInString(fileNameStr, "https://"));
+	bStream = bStream || (ofIsStringInString(fileNameStr, "rtsp://"));
 
 	NSURL * url = nil;
 	if(bStream == YES) {
@@ -125,12 +126,15 @@ bool ofAVFoundationPlayer::loadPlayer(std::string name, bool bAsync) {
 #endif
 
 #ifdef TARGET_OSX
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 		err = CVOpenGLTextureCacheCreate(kCFAllocatorDefault,
 										 nullptr,
 										 CGLGetCurrentContext(),
 										 CGLGetPixelFormat(CGLGetCurrentContext()),
 										 nullptr,
 										 &_videoTextureCache);
+#pragma clang diagnostic pop
 #endif
 
 		if(err) {
@@ -184,7 +188,10 @@ void ofAVFoundationPlayer::close() {
         pixels.clear();
         videoTexture.clear();
 
-		[videoPlayer close];
+		// Pause, unload synchronously, clear the handle: one teardown, completed before close() returns (see commit message).
+		[videoPlayer pause];
+		[videoPlayer unloadVideo];
+		videoPlayer = nullptr;
     }
 
     bFrameNew = false;
@@ -430,18 +437,17 @@ void ofAVFoundationPlayer::initTextureCache() {
      *  which is unecessary in this case because the texture already exists.
      *  so... we can use ofTexture::setUseExternalTextureID() to get around this.
      */
-
+  
 	if (!videoTexture.isAllocated()) {
 		int videoTextureW = getWidth();
 		int videoTextureH = getHeight();
 		videoTexture.allocate(videoTextureW, videoTextureH, GL_RGBA);
-
-		ofTextureData & texData = videoTexture.getTextureData();
-		texData.tex_t = 1.0f; // these values need to be reset to 1.0 to work properly.
-		texData.tex_u = 1.0f; // assuming this is something to do with the way ios creates the texture cache.
 		videoTexture.setTextureMinMagFilter(GL_LINEAR, GL_LINEAR);
 		videoTexture.setTextureWrap(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
-	}
+    }
+    ofTextureData & texData = videoTexture.getTextureData();
+    texData.tex_t = 1.0f; // these values need to be reset to 1.0 to work properly.
+    texData.tex_u = 1.0f; // assuming this is something to do with the way ios
 
     CVReturn err;
     unsigned int textureCacheID;
@@ -472,13 +478,19 @@ void ofAVFoundationPlayer::initTextureCache() {
 
 #ifdef TARGET_OSX
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     err = CVOpenGLTextureCacheCreateTextureFromImage(nullptr,
                                                      _videoTextureCache,
                                                      imageBuffer,
                                                      nullptr,
                                                      &_videoTextureRef);
+#pragma clang diagnostic pop
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     textureCacheID = CVOpenGLTextureGetName(_videoTextureRef);
+#pragma clang diagnostic pop
 
 #endif
 
@@ -500,7 +512,10 @@ void ofAVFoundationPlayer::initTextureCache() {
 #endif
 
 #ifdef TARGET_OSX
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     CVOpenGLTextureCacheFlush(_videoTextureCache, 0);
+#pragma clang diagnostic pop
 #endif
 	killTexture();
 }
@@ -513,7 +528,10 @@ void ofAVFoundationPlayer::killTexture() {
     }
 #elif defined TARGET_OSX
     if (_videoTextureRef != nullptr) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         CVOpenGLTextureRelease(_videoTextureRef);
+#pragma clang diagnostic pop
         _videoTextureRef = nullptr;
     }
 #endif
@@ -532,7 +550,10 @@ void ofAVFoundationPlayer::killTextureCache() {
 
 #ifdef TARGET_OSX
     if(_videoTextureCache != nullptr) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         CVOpenGLTextureCacheRelease(_videoTextureCache);
+#pragma clang diagnostic pop
         _videoTextureCache = nullptr;
     }
 
@@ -555,6 +576,24 @@ float ofAVFoundationPlayer::getHeight() const {
     }
 
     return [videoPlayer getHeight];
+}
+
+//--------------------------------------------------------------
+float ofAVFoundationPlayer::getDisplayWidth() const {
+    if(videoPlayer == nullptr) {
+        return 0;
+    }
+    
+    return [videoPlayer getDisplayWidth];
+}
+
+//--------------------------------------------------------------
+float ofAVFoundationPlayer::getDisplayHeight() const {
+    if(videoPlayer == nullptr) {
+        return 0;
+    }
+    
+    return [videoPlayer getDisplayHeight];
 }
 
 //--------------------------------------------------------------
@@ -591,6 +630,15 @@ bool ofAVFoundationPlayer::isPlaying() const {
     }
 
     return [videoPlayer isPlaying];
+}
+
+//--------------------------------------------------------------
+bool ofAVFoundationPlayer::isAnamorphic() const {
+    if(videoPlayer == nullptr) {
+        return false;
+    }
+    
+    return [videoPlayer isAnamorphic];
 }
 
 //--------------------------------------------------------------
@@ -762,8 +810,8 @@ void * ofAVFoundationPlayer::getAVFoundationVideoPlayer() {
 #endif
 
 //-------------------------------------------------------------- DEPRECATED.
-bool ofAVFoundationPlayer::loadMovie(std::string name) {
-    return load(name);
+bool ofAVFoundationPlayer::loadMovie(const of::filesystem::path & fileName) {
+    return load(fileName);
 }
 
 ofPixels & ofAVFoundationPlayer::getPixelsRef() {

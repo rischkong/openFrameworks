@@ -29,7 +29,7 @@ void ofApp::setup() {
 	// we know that they are named in seq
 	ofDirectory dir;
 
-	int nFiles = dir.listDir("plops");
+	int nFiles = static_cast<int>(dir.listDir("plops"));
 	dir.sort();
 
 	if(nFiles) {
@@ -133,8 +133,8 @@ void ofApp::keyPressed(int key){
 	if(key == 't')            bFrameIndependent = !bFrameIndependent;
 
 	// check for less than zero...
-	sequenceFPS = MAX(sequenceFPS, 1);
-	appFPS      = MAX(appFPS, 1);
+	sequenceFPS = std::max(sequenceFPS, 1.f);
+	appFPS      = std::max(appFPS, 1);
 
 	ofSetFrameRate(appFPS);
 }

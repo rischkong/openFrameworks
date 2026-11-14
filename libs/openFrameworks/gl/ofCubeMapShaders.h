@@ -8,7 +8,6 @@
 #pragma once
 
 #include "ofGLUtils.h"
-#include "ofConstants.h"
 
 class ofCubeMapShaders {
 public:
@@ -19,9 +18,13 @@ public:
 	};
 	
 	static std::string getGLSLHeader() {
-		std::string vstr = "#version 150\n";
+		std::string vstr { "#version 150\n" };
 		if( ofGetGLRenderer() ) {
-			vstr = "#version "+ofGLSLVersionFromGL(ofGetGLRenderer()->getGLVersionMajor(), ofGetGLRenderer()->getGLVersionMinor())+"\n";
+			vstr = "#version "+ofGLSLVersionFromGL(ofGetGLRenderer()->getGLVersionMajor(), ofGetGLRenderer()->getGLVersionMinor());
+			#ifdef TARGET_OPENGLES
+			if( ofGetGLRenderer()->getGLVersionMajor() >= 3 ) vstr += " es";
+			#endif
+			vstr += "\n";
 		}
 		#ifdef TARGET_OPENGLES
 		vstr += "#define TARGET_OPENGLES\n";
@@ -41,18 +44,19 @@ public:
 	}
 	
 	static std::string defaultVertShader() {
-		std::string vshader = getGLSLHeader();
+		
+		std::string vshader { getGLSLHeader() };
 		vshader += R"(in vec4 position;
 					uniform mat4 uProjection;
-								uniform mat4 uView;
-								
-								out vec3 oLocalPos;
-								
-								void main() {
-									oLocalPos = position.xyz;
-									gl_Position = uProjection * uView * vec4(position.xyz, 1.0);
-								}
-					)";
+					uniform mat4 uView;
+					
+					out vec3 oLocalPos;
+					
+					void main() {
+						oLocalPos = position.xyz;
+						gl_Position = uProjection * uView * vec4(position.xyz, 1.0);
+					}
+		)";
 								
 		return vshader;
 	}
@@ -103,7 +107,7 @@ public:
 		return rsource;
 	}
 	
-	static ShaderSource irriadianceCubeMap() {
+	static ShaderSource irradianceCubeMap() {
 		ShaderSource rsource;
 		rsource.vertShader = defaultVertShader();
 		

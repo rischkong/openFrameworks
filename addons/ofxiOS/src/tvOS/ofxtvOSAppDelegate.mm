@@ -6,6 +6,7 @@
 //
 
 #include "ofxtvOSAppDelegate.h"
+#if defined(TARGET_OF_TVOS) && defined(OF_UI_KIT) && defined(TARGET_OF_IOS) && !defined(TARGET_OF_WATCHOS) && !defined(TARGET_OF_XROS)
 
 #include "ofxtvOSViewController.h"
 #include "ofxtvOSGLKViewController.h"
@@ -86,7 +87,9 @@
     ofxiOSAlerts.gotMemoryWarning();
 }
 
-- (BOOL)application:(UIApplication *)application handleOpenURL:(NSURL *)url {
+- (BOOL)application:(UIApplication *)application
+            openURL:(NSURL *)url
+            options:(NSDictionary<UIApplicationOpenURLOptionsKey, id> *)options {
     NSString *urlData = [url absoluteString];
     const char * response = [urlData UTF8String];
     ofxiOSAlerts.launchedWithURL(response);
@@ -95,3 +98,4 @@
 
 
 @end
+#endif

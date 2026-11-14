@@ -1,7 +1,11 @@
 #include "ofTrueTypeFont.h"
-//--------------------------
+#include "ofGraphics.h"
+#include "ofPixels.h"
+#include "ofPath.h"
 
 #include <ft2build.h>
+#include <algorithm>
+#include <numeric>
 
 #ifdef TARGET_LINUX
 #include <fontconfig/fontconfig.h>
@@ -11,11 +15,6 @@
 #include FT_GLYPH_H
 #include FT_OUTLINE_H
 #include FT_TRIGONOMETRY_H
-
-#include <algorithm>
-#include <numeric>
-
-#include "ofGraphics.h"
 
 using std::max;
 using std::vector;
@@ -230,23 +229,26 @@ static ofPath makeContoursForCharacter(FT_Face face){
 }
 
 #ifdef TARGET_OSX
+
+#include <ApplicationServices/ApplicationServices.h>
+
 //------------------------------------------------------------------
-static string osxFontPathByName(const string& fontname){
-	CFStringRef targetName = CFStringCreateWithCString(nullptr, fontname.c_str(), kCFStringEncodingUTF8);
+static of::filesystem::path osxFontPathByName(const of::filesystem::path & fileName) {
+	CFStringRef targetName = CFStringCreateWithCString(nullptr, fileName.c_str(), kCFStringEncodingUTF8);
 	CTFontDescriptorRef targetDescriptor = CTFontDescriptorCreateWithNameAndSize(targetName, 0.0);
 	CFURLRef targetURL = (CFURLRef) CTFontDescriptorCopyAttribute(targetDescriptor, kCTFontURLAttribute);
-	string fontPath = "";
+	string fontDir = "";
 
 	if(targetURL) {
 		UInt8 buffer[PATH_MAX];
 		CFURLGetFileSystemRepresentation(targetURL, true, buffer, PATH_MAX);
-		fontPath = string((char *)buffer);
+		fontDir = string((char *)buffer);
 		CFRelease(targetURL);
 	}
 
 	CFRelease(targetName);
 	CFRelease(targetDescriptor);
-
+	of::filesystem::path fontPath = { fontDir };
 	return fontPath;
 }
 #endif
@@ -254,7 +256,7 @@ static string osxFontPathByName(const string& fontname){
 #ifdef TARGET_WIN32
 #include <unordered_map>
 // font font face -> file name name mapping
-static std::unordered_map<string, string> fonts_table;
+static std::unordered_map<string, of::filesystem::path> fonts_table;
 // read font linking information from registry, and store in std::map
 //------------------------------------------------------------------
 void initWindows(){
@@ -273,7 +275,6 @@ void initWindows(){
 	DWORD max_data_len;
 	wchar_t value_name[2048];
 	BYTE *value_data;
-
 
 	// get font_file_name -> font_face mapping from the "Fonts" registry key
 
@@ -295,48 +296,41 @@ void initWindows(){
 
 	char value_name_char[2048];
 	char value_data_char[2048];
-	/*char ppidl[2048];
-	char fontsPath[2048];
-	SHGetKnownFolderIDList(FOLDERID_Fonts, 0, nullptr, &ppidl);
-	SHGetPathFromIDList(ppidl,&fontsPath);*/
-	string fontsDir = getenv ("windir");
+	string fontsDir = ofGetEnv("windir");
 	fontsDir += "\\Fonts\\";
+
 	for (DWORD i = 0; i < value_count; ++i)
 	{
 			DWORD name_len = 2048;
 			DWORD data_len = max_data_len;
-
 			l_ret = RegEnumValueW(key_ft, i, value_name, &name_len, nullptr, nullptr, value_data, &data_len);
 			if(l_ret != ERROR_SUCCESS){
 				 ofLogError("ofTrueTypeFont") << "initWindows(): couldn't read registry key for font type";
 				 continue;
 			}
-
 			wcstombs(value_name_char,value_name,2048);
 			wcstombs(value_data_char,reinterpret_cast<wchar_t *>(value_data),2048);
 			string curr_face = value_name_char;
 			string font_file = value_data_char;
 			curr_face = curr_face.substr(0, curr_face.find('(') - 1);
 			curr_face = ofToLower(curr_face);
-			fonts_table[curr_face] = fontsDir + font_file;
+			of::filesystem::path fontPath = { fontsDir + font_file };
+			fonts_table[curr_face] = fontPath;
 	}
-
-
 	HeapFree(GetProcessHeap(), 0, value_data);
-
 	l_ret = RegCloseKey(key_ft);
 }
 
 
-static string winFontPathByName(const string& fontname ){
+static of::filesystem::path winFontPathByName(const string & fontname) {
 	return fonts_table[fontname];
 }
 #endif
 
 #ifdef TARGET_LINUX
 //------------------------------------------------------------------
-static string linuxFontPathByName(const string& fontname){
-	string filename;
+static of::filesystem::path linuxFontPathByName(const string & fontname) {
+	of::filesystem::path fontPath;
 	FcPattern * pattern = FcNameParse((const FcChar8*)fontname.c_str());
 	FcBool ret = FcConfigSubstitute(0,pattern,FcMatchPattern);
 	if(!ret){
@@ -352,33 +346,33 @@ static string linuxFontPathByName(const string& fontname){
 		ofLogError() << "linuxFontPathByName(): couldn't match font file or system font with name \"" << fontname << "\"";
 		FcPatternDestroy(fontMatch);
 		FcPatternDestroy(pattern);
-		return "";
+		return {};
 	}
 	FcChar8	*file;
 	if (FcPatternGetString (fontMatch, FC_FILE, 0, &file) == FcResultMatch){
-		filename = (const char*)file;
+		fontPath = (const char*)file;
 	}else{
 		ofLogError() << "linuxFontPathByName(): couldn't find font match for \"" << fontname << "\"";
 		FcPatternDestroy(fontMatch);
 		FcPatternDestroy(pattern);
-		return "";
+		return {};
 	}
 	FcPatternDestroy(fontMatch);
 	FcPatternDestroy(pattern);
-	return filename;
+	return fontPath;
 }
 #endif
 
 //-----------------------------------------------------------
-static bool loadFontFace(const of::filesystem::path& _fontname, FT_Face & face, of::filesystem::path & filename, int index){
-	of::filesystem::path fontname = _fontname;
-	filename = ofToDataPath(_fontname,true);
-	ofFile fontFile(filename,ofFile::Reference);
+// FIXME: it seems first parameter is string because it represents the font name only / can be
+static bool loadFontFace(const string & _fontname, FT_Face & face,
+						 of::filesystem::path & _filename, int index){
+	auto fontname = _fontname;
+	auto filename = ofToDataPathFS(fontname);
 	int fontID = index;
-	if(!fontFile.exists()){
+	if(!of::filesystem::exists(filename)){
 #ifdef TARGET_LINUX
-		// FIXME: update function linuxFontPathByName to use path instead of string
-		filename = linuxFontPathByName(fontname.string());
+		filename = linuxFontPathByName(fontname);
 #elif defined(TARGET_OSX)
 		if(fontname==OF_TTF_SANS){
 			fontname = "Helvetica Neue";
@@ -392,25 +386,25 @@ static bool loadFontFace(const of::filesystem::path& _fontname, FT_Face & face, 
 		}else if(fontname==OF_TTF_MONO){
 			fontname = "Menlo Regular";
 		}
-		filename = osxFontPathByName(fontname.string());
+		filename = osxFontPathByName(fontname);
 #elif defined(TARGET_WIN32)
 		if(fontname==OF_TTF_SANS){
-			fontname = "Arial";
+			fontname = "arial";
 		}else if(fontname==OF_TTF_SERIF){
-			fontname = "Times New Roman";
+			fontname = "times new roman";
 		}else if(fontname==OF_TTF_MONO){
-			fontname = "Courier New";
+			fontname = "courier new";
 		}
-		filename = winFontPathByName(fontname.string());
+		filename = winFontPathByName(fontname);
 #endif
 		if(filename == "" ){
 			ofLogError("ofTrueTypeFont") << "loadFontFace(): couldn't find font " << fontname;
 			return false;
 		}
-		ofLogVerbose("ofTrueTypeFont") << "loadFontFace(): " << fontname << " not a file in data loading system font from \"" << filename << "\"";
+		ofLogVerbose("ofTrueTypeFont") << "loadFontFace(): " << fontname << " not a file in data loading system font from " << filename;
 	}
 	FT_Error err;
-	err = FT_New_Face( library, filename.string().c_str(), fontID, &face );
+	err = FT_New_Face( library, ofPathToString(filename).c_str(), fontID, &face );
 	if (err) {
 		// simple error table in lieu of full table (see fterrors.h)
 		string errorString = "unknown freetype";
@@ -460,7 +454,8 @@ bool ofTrueTypeFont::initLibraries(){
 //------------------------------------------------------------------
 ofTrueTypeFont::ofTrueTypeFont()
 :settings("",0){
-	bLoadedOk		= false;
+	bLoadedOk = false;
+	bUseTexture = true;
 	letterSpacing = 1;
 	spaceSize = 1;
 	fontUnitScale = 1;
@@ -506,7 +501,9 @@ ofTrueTypeFont::ofTrueTypeFont(const ofTrueTypeFont& mom)
 	settings = mom.settings;
 	glyphIndexMap = mom.glyphIndexMap;
 	texAtlas = mom.texAtlas;
+	atlasPixels = mom.atlasPixels;
 	face = mom.face;
+	bUseTexture = mom.bUseTexture;
 }
 
 //------------------------------------------------------------------
@@ -538,7 +535,9 @@ ofTrueTypeFont & ofTrueTypeFont::operator=(const ofTrueTypeFont& mom){
 	settings = mom.settings;
 	glyphIndexMap = mom.glyphIndexMap;
 	texAtlas = mom.texAtlas;
+	atlasPixels = mom.atlasPixels;
 	face = mom.face;
+	bUseTexture = mom.bUseTexture;
 
 	return *this;
 }
@@ -571,7 +570,9 @@ ofTrueTypeFont::ofTrueTypeFont(ofTrueTypeFont&& mom)
 	settings = mom.settings;
 	glyphIndexMap = std::move(mom.glyphIndexMap);
 	texAtlas = mom.texAtlas;
+	atlasPixels = std::move(mom.atlasPixels);
 	face = mom.face;
+	bUseTexture = mom.bUseTexture;
 }
 
 //------------------------------------------------------------------
@@ -602,7 +603,9 @@ ofTrueTypeFont & ofTrueTypeFont::operator=(ofTrueTypeFont&& mom){
 	settings = mom.settings;
 	glyphIndexMap = std::move(mom.glyphIndexMap);
 	texAtlas = mom.texAtlas;
+	atlasPixels = std::move(mom.atlasPixels);
 	face = mom.face;
+	bUseTexture = mom.bUseTexture;
 	return *this;
 }
 
@@ -618,7 +621,7 @@ void ofTrueTypeFont::reloadTextures(){
 }
 
 //-----------------------------------------------------------
-bool ofTrueTypeFont::loadFont(string filename, int fontSize, bool bAntiAliased, bool bFullCharacterSet, bool makeContours, float simplifyAmt, int dpi) {
+bool ofTrueTypeFont::loadFont(const of::filesystem::path & filename, int fontSize, bool bAntiAliased, bool bFullCharacterSet, bool makeContours, float simplifyAmt, int dpi) {
 	return load(filename, fontSize, bAntiAliased, bFullCharacterSet, makeContours, simplifyAmt, dpi);
 }
 
@@ -694,8 +697,8 @@ ofTrueTypeFont::glyph ofTrueTypeFont::loadGlyph(uint32_t utf8) const{
 }
 
 //-----------------------------------------------------------
-bool ofTrueTypeFont::load(const of::filesystem::path& filename, int fontSize, bool antialiased, bool fullCharacterSet, bool makeContours, float simplifyAmt, int dpi) {
-	
+bool ofTrueTypeFont::load(const of::filesystem::path & filename, int fontSize, bool antialiased, bool fullCharacterSet, bool makeContours, float simplifyAmt, int dpi) {
+
 	ofTrueTypeFontSettings settings(filename,fontSize);
 	settings.antialiased = antialiased;
 	settings.contours = makeContours;
@@ -725,7 +728,8 @@ bool ofTrueTypeFont::load(const ofTrueTypeFontSettings & _settings){
 
 	//--------------- load the library and typeface
 	FT_Face loadFace;
-	if(!loadFontFace(settings.fontName, loadFace, settings.fontName, settings.index)){
+	// FIXME: no need to pass two different parameters for the same variable
+	if(!loadFontFace(ofPathToString(settings.fontName), loadFace, settings.fontName, settings.index)){
 		return false;
 	}
 	face = std::shared_ptr<struct FT_FaceRec_>(loadFace,FT_Done_Face);
@@ -821,9 +825,9 @@ bool ofTrueTypeFont::load(const ofTrueTypeFontSettings & _settings){
 	int w;
 	int h;
 	while(!packed){
-		w = pow(2,floor((alpha/2.f) + 0.5f)); // there doesn't seem to be a round in cmath for windows.
-		//w = pow(2,round(alpha/2.f));
-		h = w;//pow(2,round(alpha - round(alpha/2.f)));
+		w = std::pow(2,std::floor((alpha/2.f) + 0.5f)); // there doesn't seem to be a round in cmath for windows.
+		//w = std::pow(2, std::round(alpha/2.f));
+		h = w;//std::pow(2, std::round(alpha - std::round(alpha/2.f)));
 		int x=0;
 		int y=0;
 		auto maxRowHeight = sortedCopy[0].tH + border*2;
@@ -872,29 +876,55 @@ bool ofTrueTypeFont::load(const ofTrueTypeFontSettings & _settings){
 		x+= glyph.tW + border*2.0;
 	}
 
-	int maxSize;
-	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxSize);
-	if(w > maxSize || h > maxSize){
-		ofLogError("ofTruetypeFont") << "Trying to allocate texture of " << w << "x" << h << " which is bigger than supported in current platform: " << maxSize;
-		return false;
-	}else{
-		texAtlas.allocate(atlasPixelsLuminanceAlpha,false);
-		texAtlas.setRGToRGBASwizzles(true);
-
-		if(settings.antialiased && settings.fontSize>20){
-			texAtlas.setTextureMinMagFilter(GL_LINEAR,GL_LINEAR);
-		}else{
-			texAtlas.setTextureMinMagFilter(GL_NEAREST,GL_NEAREST);
+	if (isUsingTexture()) {
+		const int maxSize = ofGetMaxTextureSize();
+		if (maxSize <= 0 || w > maxSize || h > maxSize) {
+			ofLogError("ofTrueTypeFont") << "Font atlas exceeds the current renderer's texture limit of " << maxSize;
+			return false;
 		}
-		texAtlas.loadData(atlasPixelsLuminanceAlpha);
-		bLoadedOk = true;
-		return true;
 	}
+	
+	atlasPixels = std::move(atlasPixelsLuminanceAlpha);
+	
+	bLoadedOk = true;
+	
+	texAtlas.clear(); 
+	setUseTexture(isUsingTexture());
+	
+	return true;
+	
 }
 
 //-----------------------------------------------------------
 bool ofTrueTypeFont::isLoaded() const{
 	return bLoadedOk;
+}
+
+//-----------------------------------------------------------
+void ofTrueTypeFont::setUseTexture(bool bUse) {
+	if(!bUse) {
+		if(texAtlas.isAllocated()) {
+			texAtlas.clear();
+		}
+	} else {
+		if(isLoaded() && !texAtlas.isAllocated() && atlasPixels.isAllocated() ) {
+			texAtlas.allocate(atlasPixels,false);
+			texAtlas.setRGToRGBASwizzles(true);
+			
+			if(settings.antialiased && settings.fontSize>20){
+				texAtlas.setTextureMinMagFilter(GL_LINEAR,GL_LINEAR);
+			}else{
+				texAtlas.setTextureMinMagFilter(GL_NEAREST,GL_NEAREST);
+			}
+			texAtlas.loadData(atlasPixels);
+		}
+	}
+	bUseTexture = bUse;
+}
+
+//-----------------------------------------------------------
+bool ofTrueTypeFont::isUsingTexture() const {
+	return bUseTexture;
 }
 
 //-----------------------------------------------------------
@@ -992,10 +1022,10 @@ void ofTrueTypeFont::drawChar(uint32_t c, float x, float y, bool vFlipped) const
 
 	auto props = getGlyphProperties(c);
 
-	float xmin		= props.xmin+x;
-	float ymin		= props.ymin;
-	float xmax		= props.xmax+x;
-	float ymax		= props.ymax;
+	float xmin = props.xmin+x;
+	float ymin = props.ymin;
+	float xmax = props.xmax+x;
+	float ymax = props.ymax;
 
 	if(!vFlipped){
 	   ymin *= -1.0;
@@ -1005,26 +1035,30 @@ void ofTrueTypeFont::drawChar(uint32_t c, float x, float y, bool vFlipped) const
 	ymin += y;
 	ymax += y;
 
-	ofIndexType firstIndex = stringQuads.getVertices().size();
+	ofIndexType firstIndex { static_cast<ofIndexType>(stringQuads.getVertices().size()) };
 
-	stringQuads.addVertex(glm::vec3(xmin,ymin,0.f));
-	stringQuads.addVertex(glm::vec3(xmax,ymin,0.f));
-	stringQuads.addVertex(glm::vec3(xmax,ymax,0.f));
-	stringQuads.addVertex(glm::vec3(xmin,ymax,0.f));
+	stringQuads.addVertices({
+		{ xmin, ymin, 0.f },
+		{ xmax, ymin, 0.f },
+		{ xmax, ymax, 0.f },
+		{ xmin, ymax, 0.f },
+	});
 
-	stringQuads.addTexCoord(glm::vec2(props.t1,props.v1));
-	stringQuads.addTexCoord(glm::vec2(props.t2,props.v1));
-	stringQuads.addTexCoord(glm::vec2(props.t2,props.v2));
-	stringQuads.addTexCoord(glm::vec2(props.t1,props.v2));
+	stringQuads.addTexCoords({
+		{ props.t1, props.v1 },
+		{ props.t2, props.v1 },
+		{ props.t2, props.v2 },
+		{ props.t1, props.v2 }
+	});
 
-	stringQuads.addIndex(firstIndex);
-	stringQuads.addIndex(firstIndex+1);
-	stringQuads.addIndex(firstIndex+2);
-	stringQuads.addIndex(firstIndex+2);
-	stringQuads.addIndex(firstIndex+3);
-	stringQuads.addIndex(firstIndex);
-	
-	
+	stringQuads.addIndices({
+		firstIndex,
+		static_cast<ofIndexType>(firstIndex + 1),
+		static_cast<ofIndexType>(firstIndex + 2),
+		static_cast<ofIndexType>(firstIndex + 2),
+		static_cast<ofIndexType>(firstIndex + 3),
+		firstIndex
+	});
 }
 
 //-----------------------------------------------------------
@@ -1144,13 +1178,19 @@ void ofTrueTypeFont::drawCharAsShape(uint32_t c, float x, float y, bool vFlipped
 		if(filled){
 			charOutlines[indexForGlyph(c)].draw(x,y);
 		}else{
+			float cw = charOutlinesContour[indexForGlyph(c)].getStrokeWidth();
+			charOutlinesContour[indexForGlyph(c)].setStrokeWidth( ofGetStyle().lineWidth );
 			charOutlinesContour[indexForGlyph(c)].draw(x,y);
+			charOutlinesContour[indexForGlyph(c)].setStrokeWidth( cw );
 		}
 	}else{
 		if(filled){
 			charOutlinesNonVFlipped[indexForGlyph(c)].draw(x,y);
 		}else{
+			float cw = charOutlinesNonVFlippedContour[indexForGlyph(c)].getStrokeWidth();
+			charOutlinesNonVFlippedContour[indexForGlyph(c)].setStrokeWidth( ofGetStyle().lineWidth );
 			charOutlinesNonVFlippedContour[indexForGlyph(c)].draw(x,y);
+			charOutlinesNonVFlippedContour[indexForGlyph(c)].setStrokeWidth( cw );
 		}
 	}
 }
@@ -1158,13 +1198,18 @@ void ofTrueTypeFont::drawCharAsShape(uint32_t c, float x, float y, bool vFlipped
 //-----------------------------------------------------------
 float ofTrueTypeFont::stringWidth(const string& c) const{
 //	return getStringBoundingBox(c, 0,0).width;
-	int w = 0;
+	float w = 0;
 	iterateString( c, 0, 0, false, [&]( uint32_t c, glm::vec2 pos ){
-		if ( c == '\t' ){
-			w += getGlyphProperties(' ').advance * spaceSize * TAB_WIDTH;
-		} else {
-			w += getGlyphProperties( c ).advance;
+		float cWidth = 0;
+
+		if(settings.direction == OF_TTF_LEFT_TO_RIGHT){
+			if ( c == '\t' ){
+				cWidth = getGlyphProperties(' ').advance * spaceSize * TAB_WIDTH;
+			} else {
+				cWidth = getGlyphProperties( c ).advance;
+			}
 		}
+		w = std::max(w, std::abs(pos.x + cWidth));
 	});
 	return w;
 }
@@ -1182,19 +1227,26 @@ ofRectangle ofTrueTypeFont::getStringBoundingBox(const string& c, float x, float
 	// Calculate bounding box by iterating over glyph properties
 	// Meaning of props can be deduced from illustration at top of:
 	// https://www.freetype.org/freetype2/docs/tutorial/step2.html
-	// 
+	//
 	// We deliberately not generate a mesh and iterate over its
 	// vertices, as this would not correctly return spacing for
 	// blank characters.
-	
+
 	float w = 0;
 	iterateString( c, x, y, vflip, [&]( uint32_t c, glm::vec2 pos ){
 		auto props = getGlyphProperties( c );
-		if ( c == '\t' ){
-			w += props.advance * spaceSize * TAB_WIDTH;
-		} else {
-			w += props.advance;
+
+		float cWidth = 0;
+
+		if(settings.direction == OF_TTF_LEFT_TO_RIGHT){
+			if ( c == '\t' ){
+				cWidth = getGlyphProperties(' ').advance * spaceSize * TAB_WIDTH;
+			} else {
+				cWidth = getGlyphProperties( c ).advance;
+			}
 		}
+
+		w = std::max(w, std::abs(pos.x - x) + cWidth);
 
 		minX = min( minX, pos.x );
 		if ( vflip ){
@@ -1233,7 +1285,15 @@ const ofMesh & ofTrueTypeFont::getStringMesh(const string& c, float x, float y, 
 
 //-----------------------------------------------------------
 const ofTexture & ofTrueTypeFont::getFontTexture() const{
+	if( !isUsingTexture() ) {
+		ofLogWarning("ofTrueTypeFont") << "getFontTexture(): make sure to call setUseTexture(true) and then load().";
+	}
 	return texAtlas;
+}
+
+//-----------------------------------------------------------
+const ofPixels & ofTrueTypeFont::getFontAtlasPixels() const{
+	return atlasPixels;
 }
 
 //-----------------------------------------------------------
@@ -1287,22 +1347,22 @@ ofTexture ofTrueTypeFont::getStringTexture(const string& str, bool vflip) const{
 		try{
 			if (c != '\n') {
 				auto g = loadGlyph(c);
-				
+
 				if (c == '\t'){
 					auto temp = loadGlyph(' ');
 					glyphs.push_back(temp);
 				}else{
 					glyphs.push_back(g);
 				}
-				 
+
 				int x = pos.x + g.props.xmin;
 				int y = pos.y;
 				glyphPositions.emplace_back(x, y);
-				
+
 				if(c == '\t')lineWidth += g.props.advance + getGlyphProperties(' ').advance * spaceSize * TAB_WIDTH;
 				else if(c == ' ')lineWidth += g.props.advance + getGlyphProperties(' ').advance * spaceSize;
 				else if(isValidGlyph(c))lineWidth += g.props.advance + getGlyphProperties(' ').advance * (letterSpacing - 1.f);
-				
+
 				width = max(width, lineWidth);
 				y += g.props.ymax;
 				height = max(height, y + getLineHeight());

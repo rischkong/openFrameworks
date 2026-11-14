@@ -16,9 +16,11 @@
 
 PLATFORM_PROJECT_RELEASE_TARGET = bin/em/$(BIN_NAME)/index.html
 PLATFORM_PROJECT_DEBUG_TARGET = bin/em/$(BIN_NAME)/index.html
+OUTPUT_DIR_RELEASE = $(dir $(PLATFORM_PROJECT_RELEASE_TARGET))
+OUTPUT_DIR_DEBUG = $(dir $(PLATFORM_PROJECT_DEBUG_TARGET))
 BYTECODECORE=1
-PLATFORM_CORELIB_DEBUG_TARGET = $(OF_CORE_LIB_PATH)/libopenFrameworksDebug.bc
-PLATFORM_CORELIB_RELEASE_TARGET = $(OF_CORE_LIB_PATH)/libopenFrameworks.bc
+PLATFORM_CORELIB_DEBUG_TARGET = $(OF_CORE_LIB_PATH)/libopenFrameworksDebug.o
+PLATFORM_CORELIB_RELEASE_TARGET = $(OF_CORE_LIB_PATH)/libopenFrameworks.o
 
 ################################################################################
 # PLATFORM DEFINES
@@ -35,7 +37,7 @@ PLATFORM_CORELIB_RELEASE_TARGET = $(OF_CORE_LIB_PATH)/libopenFrameworks.bc
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
 
-PLATFORM_DEFINES = __EMSCRIPTEN__
+PLATFORM_DEFINES = __EMSCRIPTEN__ URI_STATIC_BUILD TARGET_EMSCRIPTEN
 
 ################################################################################
 # PLATFORM REQUIRED ADDON
@@ -63,9 +65,53 @@ PLATFORM_REQUIRED_ADDONS = ofxEmscripten
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
 
+PLATFORM_PTHREAD = -pthread -matomics -mbulk-memory
+CFLAG_PLATFORM_PTHREAD = -pthread -matomics -mbulk-memory
+
+ifdef VCPKG_ROOT
+	TRIPPLET=wasm32-emscripten
+	LIB_PATH="$(VCPKG_ROOT)/installed/$(TRIPPLET)/lib"
+	INCLUDE_PATH="$(VCPKG_ROOT/)installed/$(TRIPPLET)/include"
+endif
+
 # Code Generation Option Flags (http://gcc.gnu.org/onlinedocs/gcc/Code-Gen-Options.html)
-PLATFORM_CFLAGS =
-PLATFORM_CXXFLAGS = -Wall -std=c++17 -Wno-warn-absolute-paths
+PLATFORM_CFLAGS = -std=c17 -fPIC $(CFLAG_PLATFORM_PTHREAD)
+PLATFORM_CXXFLAGS = -Wall -std=c++23 -fPIC -Wno-warn-absolute-paths $(CFLAG_PLATFORM_PTHREAD)
+
+################################################################################
+# WASM32 / WASM64
+#   PROJECT_EMSCRIPTEN_WASM = 32 (default) or 64, in the project's config.make
+#   or on the command line: make PROJECT_EMSCRIPTEN_WASM=64
+#   (EMSCRIPTEN_MEMORY64=1 also selects 64).
+#   wasm64 needs the 64-bit libs: BITS=64 scripts/emscripten/download_libs.sh
+#   wasm32 uses libs/*/lib/emscripten/WASM and the core in lib/emscripten;
+#   wasm64 uses libs/*/lib/emscripten/WASM64 and the core in lib/emscripten/WASM64
+################################################################################
+ifdef EMSCRIPTEN_MEMORY64
+	PROJECT_EMSCRIPTEN_WASM ?= 64
+endif
+PROJECT_EMSCRIPTEN_WASM ?= 32
+ifeq ($(PROJECT_EMSCRIPTEN_WASM),64)
+	ABI_PATH = WASM64
+	ABI = WASM64
+	OF_CORE_LIB_PATH := $(OF_LIBS_OF_COMPILED_PATH)/lib/$(PLATFORM_LIB_SUBPATH)/WASM64
+	PLATFORM_CFLAGS += -sMEMORY64=1
+	PLATFORM_CXXFLAGS += -sMEMORY64=1
+else ifeq ($(PROJECT_EMSCRIPTEN_WASM),32)
+	ABI_PATH = WASM
+else
+$(error PROJECT_EMSCRIPTEN_WASM must be 32 or 64, not "$(PROJECT_EMSCRIPTEN_WASM)")
+endif
+
+################################################################################
+# EMBIND_AOT CONFIGURATION
+# OFF by default (recommended). It frequently breaks addons (FreeImage, ofxJSON, etc.).
+# Set PROJECT_EMSCRIPTEN_EMBIND_AOT=1 in your project/config.make or pass it to make
+# if you need CSP compliance and know your code is fully compatible.
+# It also needs at least one EMSCRIPTEN_BINDINGS block: with none (OF core has
+# none) the link fails with "expected to find pattern <<< EMBIND_AOT_INVOKERS >>>".
+################################################################################
+PROJECT_EMSCRIPTEN_EMBIND_AOT ?= 0
 
 ################################################################################
 # PLATFORM LDFLAGS
@@ -76,13 +122,17 @@ PLATFORM_CXXFLAGS = -Wall -std=c++17 -Wno-warn-absolute-paths
 ################################################################################
 
 ifdef PROJECT_EMSCRIPTEN_TOTAL_MEMORY
-	PLATFORM_EMSCRIPTEN_TOTAL_MEMORY=$(PROJECT_EMSCRIPTEN_TOTAL_MEMORY)
+	PLATFORM_EMSCRIPTEN_INITIAL_MEMORY=$(PROJECT_EMSCRIPTEN_TOTAL_MEMORY)
 else
-	PLATFORM_EMSCRIPTEN_TOTAL_MEMORY=134217728
+	PLATFORM_EMSCRIPTEN_INITIAL_MEMORY=134217728
 endif
 
 CUR_CC = $(CC)
 CC := $(CUR_CC) -r
+ifeq ($(PROJECT_EMSCRIPTEN_WASM),64)
+	# the core's relocatable link (emcc -r) needs to know the objects are wasm64
+	CC := $(CC) -sMEMORY64=1
+endif
 
 ifdef USE_CCACHE
 	ifeq ($(findstring ccache, $(CC)),)
@@ -93,20 +143,90 @@ ifdef USE_CCACHE
 	endif
 endif
 
-PLATFORM_LDFLAGS = -Wl --gc-sections --preload-file bin/data@data --emrun --bind --profiling-funcs -s USE_FREETYPE=1 -s ALLOW_MEMORY_GROWTH=1 -s MAX_WEBGL_VERSION=2 -s WEBGL2_BACKWARDS_COMPATIBILITY_EMULATION=1 -s FULL_ES2 -sFULL_ES3=1
+#PLATFORM_LDFLAGS += -s EMBIND_AOT=1
+PLATFORM_LDFLAGS = --emrun --bind --profiling-funcs
+ifneq ($(strip $(wildcard bin/data/*)),)
+	PLATFORM_LDFLAGS += --preload-file bin/data@data
+endif
+PLATFORM_LDFLAGS += --use-port=emdawnwebgpu
+# PROJECT_DEFINES += OF_WEBGL_VERSION=1 in config.make for a WebGL 1 only build (default WebGL 2)
+ifneq ($(filter OF_WEBGL_VERSION=1,$(PROJECT_DEFINES)),)
+PLATFORM_LDFLAGS += -s MAX_WEBGL_VERSION=1 -s FULL_ES2
+else
+PLATFORM_LDFLAGS += -s MAX_WEBGL_VERSION=2 -s WEBGL2_BACKWARDS_COMPATIBILITY_EMULATION=1 -s FULL_ES3
+endif
+PLATFORM_LDFLAGS += -s AUTO_NATIVE_LIBRARIES=1
+PLATFORM_LDFLAGS += -s AUTO_JS_LIBRARIES=1
+
+PLATFORM_LDFLAGS += -s VERBOSE=1
+
+PLATFORM_LDFLAGS +=  $(PLATFORM_PTHREAD)
+PLATFORM_LDFLAGS += -s AUDIO_WORKLET=1 -s WASM_WORKERS=1 -s ENVIRONMENT="web,worker"
+ifeq ($(PROJECT_EMSCRIPTEN_WASM),64)
+	PLATFORM_LDFLAGS += -sMEMORY64=1
+endif
+
 PLATFORM_LDFLAGS += --js-library $(OF_ADDONS_PATH)/ofxEmscripten/libs/html5video/lib/emscripten/library_html5video.js
+PLATFORM_LDFLAGS += --pre-js $(OF_ADDONS_PATH)/ofxEmscripten/libs/html5video/lib/emscripten/recordVideo.js
+PLATFORM_LDFLAGS += --pre-js $(OF_ADDONS_PATH)/ofxEmscripten/libs/html5video/lib/emscripten/fix-webm-duration.js
+PLATFORM_LDFLAGS += --post-js $(OF_ADDONS_PATH)/ofxEmscripten/libs/html5audio/lib/emscripten/library_audioDeviceSelect.js
 PLATFORM_LDFLAGS += --js-library $(OF_ADDONS_PATH)/ofxEmscripten/libs/html5audio/lib/emscripten/library_html5audio.js
 
+# no MAIN_MODULE: dynamic linking is not supported with WASM_WORKERS (audioWorklet);
+# EXPORT_ALL below still exports every symbol for the --js-library / --pre-js code
+PLATFORM_LDFLAGS += -s EXPORT_ALL=1
+PLATFORM_LDFLAGS += -s NO_DYNAMIC_EXECUTION=1
+PLATFORM_LDFLAGS += -s ABORT_ON_WASM_EXCEPTIONS=0
+PLATFORM_LDFLAGS += -s FILESYSTEM=1
+
+PLATFORM_LDFLAGS += -s MINIFY_HTML=0
+#PLATFORM_LDFLAGS += -s SINGLE_FILE=1
+#PLATFORM_LDFLAGS += -s MODULARIZE=1
+
+ifeq ($(PROJECT_EMSCRIPTEN_EMBIND_AOT),1)
+    PLATFORM_LDFLAGS += -s EMBIND_AOT=1 -s DYNAMIC_EXECUTION=0
+    $(info === EMBIND_AOT ENABLED === (faster startup / CSP safe))
+else
+    PLATFORM_LDFLAGS += -s DYNAMIC_EXECUTION=1
+    $(info EMBIND_AOT disabled (safer for addons))
+endif
+
+#PLATFORM_LDFLAGS += -s EVAL_CTORS=1 -s ERROR_ON_UNDEFINED_SYMBOLS=1
+# PLATFORM_LDFLAGS += -s WASM_WORKERS=1 -s ENVIRONMENT="web,worker"
+
+PLATFORM_LDFLAGS += -s USE_GLFW=3 -lglfw
+PLATFORM_LDFLAGS += -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','UTF8ToString','stringToUTF8','lengthBytesUTF8']
+
+
+# If there are errors we need to see them! Do not change this!
+PLATFORM_LDFLAGS += -sERROR_ON_UNDEFINED_SYMBOLS=1
+
+#PLATFORM_LDFLAGS += -s AUDIO_WORKLET=1 -s WASM_WORKERS=1 -sENVIRONMENT="web,worker" -s WEBAUDIO_DEBUG=1
+
 ifdef PROJECT_EMSCRIPTEN_TEMPLATE
-	PLATFORM_LDFLAGS += --shell-file $(PROJECT_EMSCRIPTEN_TEMPLATE)
+ 	PLATFORM_LDFLAGS += --shell-file $(PROJECT_EMSCRIPTEN_TEMPLATE)
 else
 	PLATFORM_LDFLAGS += --shell-file $(OF_LIBS_PATH)/openFrameworksCompiled/project/emscripten/template.html
 endif
 
-PLATFORM_OPTIMIZATION_LDFLAGS_RELEASE = -O3 -s TOTAL_MEMORY=$(PLATFORM_EMSCRIPTEN_TOTAL_MEMORY) --memory-init-file 1
+EMSCRIPTEN_JS = $(OF_LIBS_PATH)/openFrameworksCompiled/project/emscripten/app.js
+EMSCRIPTEN_CSS = $(OF_LIBS_PATH)/openFrameworksCompiled/project/emscripten/style.css
+EMSCRIPTEN_HTACCESS = $(OF_LIBS_PATH)/openFrameworksCompiled/project/emscripten/.htaccess
+OUTPUT_DIR = output
 
-PLATFORM_OPTIMIZATION_LDFLAGS_DEBUG = -g3 -s TOTAL_MEMORY=134217728 --memory-init-file 1  -s DEMANGLE_SUPPORT=1 -s ASSERTIONS=2
+PLATFORM_OPTIMIZATION_LDFLAGS_RELEASE = -O3 \
+  -s INITIAL_MEMORY=$(PLATFORM_EMSCRIPTEN_INITIAL_MEMORY) \
+  -s ALLOW_MEMORY_GROWTH=1 \
+  -s WASM=1
 
+PLATFORM_OPTIMIZATION_LDFLAGS_DEBUG = -O1 -g \
+  -s INITIAL_MEMORY=$(PLATFORM_EMSCRIPTEN_INITIAL_MEMORY) \
+  -s ALLOW_MEMORY_GROWTH=1 \
+  -s WASM=1 \
+  -s VERBOSE=1 \
+  -s GL_ASSERTIONS=1 \
+  -s ASSERTIONS=2 \
+  -gsource-map
 ################################################################################
 # PLATFORM OPTIMIZATION CFLAGS
 #   These are lists of CFLAGS that are target-specific.  While any flags could
@@ -123,10 +243,11 @@ PLATFORM_OPTIMIZATION_LDFLAGS_DEBUG = -g3 -s TOTAL_MEMORY=134217728 --memory-ini
 ################################################################################
 
 # RELEASE Debugging options (http://gcc.gnu.org/onlinedocs/gcc/Debugging-Options.html)
-PLATFORM_OPTIMIZATION_CFLAGS_RELEASE = -O3
+PLATFORM_OPTIMIZATION_CFLAGS_RELEASE = -O3 
 
 # DEBUG Debugging options (http://gcc.gnu.org/onlinedocs/gcc/Debugging-Options.html)
-PLATFORM_OPTIMIZATION_CFLAGS_DEBUG = -g3 -s DEMANGLE_SUPPORT=1 -s ASSERTIONS=2
+PLATFORM_OPTIMIZATION_CFLAGS_DEBUG = -O1 -g 
+
 
 ################################################################################
 # PLATFORM CORE EXCLUSIONS
@@ -160,17 +281,22 @@ PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/communication/%.cpp
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/sound/ofFmodSoundPlayer.cpp
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/sound/ofOpenALSoundPlayer.cpp
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/sound/ofRtAudioSoundStream.cpp
-PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/app/ofAppGlutWindow.cpp
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/app/ofAppGLFWWindow.cpp
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/app/ofAppEGLWindow.cpp
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/graphics/ofCairoRenderer.cpp
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openFrameworks/gl/ofGLRenderer.cpp
 # third party
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/glew/%
-PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/boost/include/boost/%
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/videoInput/%
 PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/fmod/%
-PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/freetype/lib/%
+PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/openssl/%
+PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/curl/%
+PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/rtAudio/%
+PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/cairo/%
+PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/download/%
+PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/pixman/%
+PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/metalangle/%
+# PLATFORM_CORE_EXCLUSIONS += $(OF_LIBS_PATH)/freetype/lib/%
 
 ################################################################################
 # PLATFORM HEADER SEARCH PATHS
@@ -213,7 +339,7 @@ PLATFORM_STATIC_LIBRARIES =
 
 # shared libraries
 PLATFORM_SHARED_LIBRARIES =
-#PLATFORM_SHARED_LIBRARIES += $(OF_LIBS_PATH)/freetype/lib/$(ABI_LIB_SUBPATH)/libfreetype.bc
+#PLATFORM_SHARED_LIBRARIES += $(OF_LIBS_PATH)/freetype/lib/$(ABI_LIB_SUBPATH)/libfreetype.a
 
 
 ################################################################################
@@ -270,8 +396,25 @@ PLATFORM_LIBRARY_SEARCH_PATHS =
 ################################################################################
 #PLATFORM_CXX=
 
+BUILD_TYPE ?= release
+
 afterplatform: $(TARGET_NAME)
 	@echo
+	@echo "Copying assets based on build type ($(BUILD_TYPE))..."
+	@if [ "$(BUILD_TYPE)" = "debug" ]; then \
+		mkdir -p $(OUTPUT_DIR_DEBUG); \
+		echo "Copying app.js and style.css to debug directory..."; \
+		cp $(EMSCRIPTEN_JS) $(OUTPUT_DIR_DEBUG) || echo "Failed to copy app.js"; \
+		cp $(EMSCRIPTEN_CSS) $(OUTPUT_DIR_DEBUG) || echo "Failed to copy style.css"; \
+		cp $(EMSCRIPTEN_HTACCESS) $(OUTPUT_DIR_DEBUG) || echo "Failed to copy .htaccess"; \
+	else \
+		mkdir -p $(OUTPUT_DIR_RELEASE); \
+		echo "Copying app.js and style.css to release directory..."; \
+		cp $(EMSCRIPTEN_JS) $(OUTPUT_DIR_RELEASE) || echo "Failed to copy app.js"; \
+		cp $(EMSCRIPTEN_CSS) $(OUTPUT_DIR_RELEASE) || echo "Failed to copy style.css"; \
+		cp $(EMSCRIPTEN_HTACCESS) $(OUTPUT_DIR_RELEASE) || echo "Failed to copy .htaccess"; \
+	fi
+	@echo "Assets copied successfully."
 	@echo "     compiling done"
 	@echo "     to launch the application on the default browser, run:"
 	@echo

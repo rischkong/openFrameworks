@@ -1,6 +1,9 @@
-#include "ofGLRenderer.h"
+//#include "ofGLRenderer.h"
 #include "ofGraphics.h"
+#include "ofGLUtils.h" // ofGetGLRenderer, ofSaveScreen
+#include "ofImage.h" // ofSaveImage
 #include "ofRendererCollection.h"
+#include "ofRectangle.h"
 
 #ifndef TARGET_WIN32
 	#define CALLBACK
@@ -10,7 +13,7 @@ using std::shared_ptr;
 using std::string;
 using std::vector;
 
-static ofVboMesh gradientMesh;
+//static ofVboMesh gradientMesh;
 
 void ofSetCurrentRenderer(shared_ptr<ofBaseRenderer> renderer, bool setDefaults) {
 	if (setDefaults) {
@@ -408,66 +411,7 @@ void ofBackgroundHex(int hexColor, int alpha){
 
 //----------------------------------------------------------
 void ofBackgroundGradient(const ofFloatColor& start, const ofFloatColor& end, ofGradientMode mode) {
-	float w = ofGetViewportWidth(), h = ofGetViewportHeight();
-	gradientMesh.clear();
-	gradientMesh.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
-#ifndef TARGET_EMSCRIPTEN
-	#ifdef TARGET_OPENGLES
-	if (ofIsGLProgrammableRenderer()) gradientMesh.setUsage(GL_STREAM_DRAW);
-	#else
-	gradientMesh.setUsage(GL_STREAM_DRAW);
-	#endif
-#endif
-	if (mode == OF_GRADIENT_CIRCULAR) {
-		// this could be optimized by building a single mesh once, then copying
-		// it and just adding the colors whenever the function is called.
-		///TODO: revert to glm::vec2!!
-		glm::vec2 center(w / 2, h / 2);
-		gradientMesh.addVertex(glm::vec3(center, 0.f));
-		gradientMesh.addColor(start);
-		float n = 32; // circular gradient resolution
-		float angleBisector = glm::two_pi<float>() / (n * 2.0);
-		float smallRadius = ofDist(0, 0, w / 2, h / 2);
-		float bigRadius = smallRadius / cos(angleBisector);
-		for (int i = 0; i <= n; i++) {
-			float theta = i * glm::two_pi<float>() / n;
-			gradientMesh.addVertex(glm::vec3(center + glm::vec2(sin(theta), cos(theta)) * bigRadius, 0));
-			gradientMesh.addColor(end);
-		}
-	} else if (mode == OF_GRADIENT_LINEAR) {
-		gradientMesh.addVertex({ 0.f, 0.f, 0.f });
-		gradientMesh.addVertex({ w, 0.f, 0.f });
-		gradientMesh.addVertex({ w, h, 0.f });
-		gradientMesh.addVertex({ 0.f, h, 0.f });
-		gradientMesh.addColor(start);
-		gradientMesh.addColor(start);
-		gradientMesh.addColor(end);
-		gradientMesh.addColor(end);
-	} else if (mode == OF_GRADIENT_BAR) {
-		gradientMesh.addVertex({ w / 2.f, h / 2.f, 0.f });
-		gradientMesh.addVertex({ 0.f, h / 2.f, 0.f });
-		gradientMesh.addVertex({ 0.f, 0.f, 0.f });
-		gradientMesh.addVertex({ w, 0.f, 0.f });
-		gradientMesh.addVertex({ w, h / 2.f, 0.f });
-		gradientMesh.addVertex({ w, h, 0.f });
-		gradientMesh.addVertex({ 0.f, h, 0.f });
-		gradientMesh.addVertex({ 0.f, h / 2, 0.f });
-		gradientMesh.addColor(start);
-		gradientMesh.addColor(start);
-		gradientMesh.addColor(end);
-		gradientMesh.addColor(end);
-		gradientMesh.addColor(start);
-		gradientMesh.addColor(end);
-		gradientMesh.addColor(end);
-		gradientMesh.addColor(start);
-	}
-	GLboolean depthMaskEnabled;
-	glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMaskEnabled);
-	glDepthMask(GL_FALSE);
-	gradientMesh.draw();
-	if (depthMaskEnabled) {
-		glDepthMask(GL_TRUE);
-	}
+	ofGetCurrentRenderer()->drawBackgroundGradient(start, end, mode);
 }
 
 //----------------------------------------------------------
@@ -528,6 +472,11 @@ void ofSetLineWidth(float lineWidth) {
 }
 
 //----------------------------------------------------------
+void ofSetPointSize(float pointSize) {
+	ofGetCurrentRenderer()->setPointSize(pointSize);
+}
+
+//----------------------------------------------------------
 void ofSetDepthTest(bool depthTest) {
 	ofGetCurrentRenderer()->setDepthTest(depthTest);
 }
@@ -540,6 +489,11 @@ void ofEnableDepthTest() {
 //----------------------------------------------------------
 void ofDisableDepthTest() {
 	ofSetDepthTest(false);
+}
+
+//----------------------------------------------------------
+void ofSetDepthWrite(bool write) {
+	ofGetCurrentRenderer()->setDepthWrite(write);
 }
 
 //----------------------------------------
@@ -601,6 +555,23 @@ void ofSetFloatColor(const ofFloatColor& acolor){
 }
 
 //----------------------------------------------------------
+void ofSetColor(const ofColor & acolor) {
+	float limit = ofColor::limit();
+	ofSetFloatColor((float)acolor.r / limit, (float)acolor.g / limit, (float)acolor.b / limit, (float)acolor.a / limit);
+}
+
+//----------------------------------------------------------
+void ofSetColor(const ofFloatColor & acolor) {
+	ofSetFloatColor(acolor);
+}
+
+//----------------------------------------------------------
+void ofSetColor(const ofShortColor & acolor) {
+	float limit = ofShortColor::limit();
+	ofSetFloatColor((float)acolor.r / limit, (float)acolor.g / limit, (float)acolor.b / limit, (float)acolor.a / limit);
+}
+
+//----------------------------------------------------------
 void ofSetHexColor(int hexColor){
 	int r = (hexColor >> 16) & 0xff;
 	int g = (hexColor >> 8) & 0xff;
@@ -615,16 +586,12 @@ void ofEnableBlendMode(ofBlendMode blendMode){
 
 //----------------------------------------------------------
 void ofEnablePointSprites() {
-	if (ofGetCurrentRenderer()->getType() == "GL" || ofGetCurrentRenderer()->getType() == "ProgrammableGL") {
-		static_cast<ofBaseGLRenderer *>(ofGetCurrentRenderer().get())->enablePointSprites();
-	}
+	ofGetCurrentRenderer()->enablePointSprites();
 }
 
 //----------------------------------------------------------
 void ofDisablePointSprites() {
-	if (ofGetCurrentRenderer()->getType() == "GL" || ofGetCurrentRenderer()->getType() == "ProgrammableGL") {
-		static_cast<ofBaseGLRenderer *>(ofGetCurrentRenderer().get())->disablePointSprites();
-	}
+	ofGetCurrentRenderer()->disablePointSprites();
 }
 
 //----------------------------------------------------------
@@ -1253,7 +1220,7 @@ void ofDrawBitmapStringHighlight(string text, int x, int y, const ofColor & back
 	int width = maxLineLength * fontSize;
 
 	ofPushStyle();
-	glDepthMask(false);
+	ofSetDepthWrite(false);
 	ofSetColor(background);
 	ofFill();
 	ofPushMatrix();
@@ -1271,9 +1238,46 @@ void ofDrawBitmapStringHighlight(string text, int x, int y, const ofColor & back
 	ofSetColor(foreground);
 	ofNoFill();
 	ofDrawBitmapString(text, x, y);
-	glDepthMask(true);
+	ofSetDepthWrite(true);
 	ofPopStyle();
 }
 
 // end text
 //--------------------------------------------------
+
+//--------------------------------------------------
+void ofSaveScreen(const of::filesystem::path & fileName) {
+	/*ofImage screen;
+   screen.allocate(ofGetWidth(), ofGetHeight(), OF_IMAGE_COLOR);
+   screen.grabScreen(0, 0, ofGetWidth(), ofGetHeight());
+   screen.save(filename);*/
+	ofPixels pixels;
+	ofGetGLRenderer()->saveFullViewport(pixels);
+	ofSaveImage(pixels, fileName);
+}
+
+//--------------------------------------------------
+void ofSaveViewport(const of::filesystem::path & fileName) {
+	// because ofSaveScreen doesn't related to viewports
+	/*ofImage screen;
+	ofRectangle view = ofGetCurrentViewport();
+	screen.allocate(view.width, view.height, OF_IMAGE_COLOR);
+	screen.grabScreen(0, 0, view.width, view.height);
+	screen.save(filename);*/
+
+	ofPixels pixels;
+	ofGetGLRenderer()->saveFullViewport(pixels);
+	ofSaveImage(pixels, fileName);
+}
+
+//--------------------------------------------------
+int saveImageCounter = 0;
+void ofSaveFrame(bool bUseViewport) {
+	of::filesystem::path fileName = ofToString(saveImageCounter) + ".png";
+	if (bUseViewport) {
+		ofSaveViewport(fileName);
+	} else {
+		ofSaveScreen(fileName);
+	}
+	saveImageCounter++;
+}

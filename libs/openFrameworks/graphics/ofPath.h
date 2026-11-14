@@ -1,8 +1,10 @@
 #pragma once
 
 #include "ofPolyline.h"
-#include "ofVboMesh.h"
+//#include "ofVboMesh.h"
+#include "ofMesh.h"
 #include "ofTessellator.h"
+// MARK: ofConstants targets
 #include "ofConstants.h"
 
 template<typename T>
@@ -248,6 +250,10 @@ public:
 	/// \brief Set the stroke width of the line if the ofPath is to be drawn
 	/// not in wireframe.
 	void setStrokeWidth(float width); // default 0
+	
+	/// \brief Set the stroke width of the line if the ofPath is to be drawn
+	/// not in wireframe.
+	void setStrokeWidth(float width) const; // default 0
 
 	/// \brief Set the color of the path. This affects both the line if the
 	/// path is drawn as wireframe and the fill if the path is drawn with
@@ -299,8 +305,10 @@ public:
 	void setCircleResolution(int circleResolution);
 	int getCircleResolution() const;
 
-	OF_DEPRECATED_MSG("Use setCircleResolution instead.", void setArcResolution(int res));
-	OF_DEPRECATED_MSG("Use getCircleResolution instead.", int getArcResolution() const);
+	[[deprecated("Use setCircleResolution")]]
+	void setArcResolution(int res);
+	[[deprecated("Use getCircleResolution")]]
+	int getArcResolution() const;
 
 	void setUseShapeColor(bool useColor);
 	bool getUseShapeColor() const;
@@ -332,13 +340,15 @@ public:
 
 	void rotateDeg(float degrees, const glm::vec3& axis);
 	void rotateRad(float radians, const glm::vec3& axis);
-	OF_DEPRECATED_MSG("Use Deg/Rad versions.", void rotate(float degrees, const glm::vec3& axis ));
+	[[deprecated("Use Deg/Rad versions.")]]
+	void rotate(float degrees, const glm::vec3& axis );
 
 	void translate(const glm::vec2 & p);
 
 	void rotateDeg(float degrees, const glm::vec2& axis);
 	void rotateRad(float radians, const glm::vec2& axis);
-	OF_DEPRECATED_MSG("Use Deg/Rad versions.", void rotate(float degrees, const glm::vec2& axis ));
+	[[deprecated("Use Deg/Rad versions.")]]
+	void rotate(float degrees, const glm::vec2& axis );
 
 	/// \brief Change the size of either the ofPolyline or ofSubPath instances that
 	/// the ofPath contains. These changes are non-reversible, so for instance
@@ -423,11 +433,11 @@ private:
 	std::vector<ofPolyline>  polylines;
 	std::vector<ofPolyline>  tessellatedContour; // if winding mode != ODD
 
-#ifdef TARGET_OPENGLES
+//#ifdef TARGET_OPENGLES
 	ofMesh				cachedTessellation;
-#else
-	ofVboMesh			cachedTessellation;
-#endif
+//#else
+//	ofVboMesh			cachedTessellation;
+//#endif
 #if defined(TARGET_EMSCRIPTEN)
 	static ofTessellator tessellator;
 #elif HAS_TLS

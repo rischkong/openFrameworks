@@ -1,0 +1,810 @@
+name: OF
+# Pushes to master/bleeding run the full matrix.
+# PRs use dorny/paths-filter: ofxiOS → ios/tvOS, VS scripts → VS, macos
+# scripts → macos; anything else (core) → full matrix.
+on:
+  push:
+    branches: [master, bleeding]
+    paths-ignore:
+      - "**/*.md"
+      - "examples/**"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "examples/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  ccache: ccache
+  RELEASE: latest
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      ios: ${{ steps.gate.outputs.ios }}
+      vs: ${{ steps.gate.outputs.vs }}
+      macos: ${{ steps.gate.outputs.macos }}
+      full: ${{ steps.gate.outputs.full }}
+    steps:
+      - uses: dorny/paths-filter@v4.0.3
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          filters: |
+            ios:
+              - 'addons/ofxiOS/**'
+              - 'scripts/ci/ios/**'
+              - 'scripts/ci/tvos/**'
+              - 'scripts/templates/ios/**'
+              - 'scripts/templates/tvOS/**'
+              - 'libs/openFrameworksCompiled/project/ios/**'
+              - 'libs/openFrameworksCompiled/project/tvOS/**'
+            vs:
+              - 'scripts/ci/vs/**'
+              - 'scripts/vs/**'
+              - 'scripts/templates/vs/**'
+              - 'scripts/templates/vs2019/**'
+              - 'scripts/templates/vs2026/**'
+              - 'libs/openFrameworksCompiled/project/vs/**'
+              - 'libs/openFrameworksCompiled/project/vs2019/**'
+              - 'libs/openFrameworksCompiled/project/vs2026/**'
+            macos:
+              - 'scripts/ci/osx/**'
+              - 'scripts/ci/macos/**'
+              - 'scripts/templates/macos/**'
+              - 'scripts/templates/osx/**'
+              - 'libs/openFrameworksCompiled/project/osx/**'
+              - 'libs/openFrameworksCompiled/project/macos/**'
+            core:
+              - '**'
+              - '!**/*.md'
+              - '!examples/**'
+              - '!addons/ofxiOS/**'
+              - '!scripts/ci/ios/**'
+              - '!scripts/ci/tvos/**'
+              - '!scripts/templates/ios/**'
+              - '!scripts/templates/tvOS/**'
+              - '!libs/openFrameworksCompiled/project/ios/**'
+              - '!libs/openFrameworksCompiled/project/tvOS/**'
+              - '!scripts/ci/vs/**'
+              - '!scripts/vs/**'
+              - '!scripts/templates/vs/**'
+              - '!scripts/templates/vs2019/**'
+              - '!scripts/templates/vs2026/**'
+              - '!libs/openFrameworksCompiled/project/vs/**'
+              - '!libs/openFrameworksCompiled/project/vs2019/**'
+              - '!libs/openFrameworksCompiled/project/vs2026/**'
+              - '!scripts/ci/osx/**'
+              - '!scripts/ci/macos/**'
+              - '!scripts/templates/macos/**'
+              - '!scripts/templates/osx/**'
+              - '!libs/openFrameworksCompiled/project/osx/**'
+              - '!libs/openFrameworksCompiled/project/macos/**'
+      - id: gate
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            echo "vs=true" >> "$GITHUB_OUTPUT"
+            echo "macos=true" >> "$GITHUB_OUTPUT"
+            echo "push/master: full matrix"
+            exit 0
+          fi
+          core='${{ steps.filter.outputs.core }}'
+          ios='${{ steps.filter.outputs.ios }}'
+          vs='${{ steps.filter.outputs.vs }}'
+          macos='${{ steps.filter.outputs.macos }}'
+          if [ "$core" = "true" ]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            echo "vs=true" >> "$GITHUB_OUTPUT"
+            echo "macos=true" >> "$GITHUB_OUTPUT"
+            echo "PR core paths: full matrix"
+          else
+            echo "full=false" >> "$GITHUB_OUTPUT"
+            echo "ios=$ios" >> "$GITHUB_OUTPUT"
+            echo "vs=$vs" >> "$GITHUB_OUTPUT"
+            echo "macos=$macos" >> "$GITHUB_OUTPUT"
+            echo "PR slim: ios=$ios vs=$vs macos=$macos"
+          fi
+
+  build-emscripten:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cfg:
+          - { target: emscripten }
+    env:
+      TARGET: ${{matrix.cfg.target}}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Docker Step
+        run: "docker run -di --name emscripten -v $PWD:/src emscripten/emsdk:7.0.0 bash"
+      # - name: Determine Release
+      #   id: vars
+      #   shell: bash
+      #   run: |
+      #     if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+      #       echo "RELEASE=${{ github.ref_name }}" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+      #       echo "RELEASE=nightly" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/bleeding" ]]; then
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     else
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     fi
+      - name: Download libs
+        run: ./scripts/$TARGET/download_libs.sh -t $RELEASE
+      - name: Install dependencies
+        run: ./scripts/ci/$TARGET/install.sh
+      - name: Build
+        run: docker exec -i emscripten sh -c "scripts/ci/$TARGET/build.sh";
+      - name: Upload Libs
+        run: scripts/ci/upload_of_lib.sh;
+        env:
+          GA_CI_SECRET: ${{ secrets.CI_SECRET }}
+
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  build-msys2:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { msystem: ucrt64, runner: windows-latest }
+          - { msystem: clang64, runner: windows-latest }
+          - { msystem: clangarm64, runner: windows-11-arm }
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Check system
+        shell: bash
+        run: gcc -v || true
+      - uses: actions/checkout@v7.0.1
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          # key: ${{ matrix.os }}-${{ matrix.type }}
+          key: ${{ matrix.msystem }}
+      - uses: msys2/setup-msys2@v2.33.0
+        with:
+          cache: true
+          release: true
+          update: true
+          msystem: ${{matrix.msystem}}
+          install: >-
+            unzip
+            make
+            pactoys
+            binutils
+          # lld
+          # gcc:p gdb:p zlib:p poco:p pkgconf:p harfbuzz:p ntldd-git:p
+          # boost:p tools:p
+          # install: >-
+          # unzip
+          # git
+          # rsync
+          # wget
+
+      # Installed here rather than via setup-msys2's pacboy input so a stalled
+      # mirror can be retried: pacman aborts the whole transaction on one
+      # "Operation too slow" download, and setup-msys2 cannot be run twice.
+      # No opencv package: ofxOpenCv links the Apothecary-built OpenCV 4
+      # static libs bundled in addons/ofxOpenCv/libs/opencv.
+      - name: Install packages
+        timeout-minutes: 30
+        run: |
+          for attempt in 1 2 3; do
+            pacboy -S --needed --noconfirm openssl:p python:p gcc:p assimp:p cairo:p curl:p freeglut:p freeimage:p glew:p glfw:p glm:p libsndfile:p libusb:p mpg123:p nlohmann-json:p openal:p pugixml:p rtaudio:p uriparser:p utf8cpp:p && exit 0
+            echo "pacman install failed (attempt $attempt), retrying..."
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: Install dependencies
+        run: ./scripts/ci/msys2/install.sh --msystem=${{ matrix.msystem }}
+
+      - name: Check deployed libraries
+        run: bash scripts/ci/check_deployed_libs.sh --platform msys2 --arch x86_64
+
+      - name: Build
+        run: ./scripts/ci/msys2/build.sh
+
+    # - name: Run tests
+    #   run: ./scripts/ci/msys2/run_tests.sh
+
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  # CMake build (libs/openFrameworksCompiled/project/CMake): core + examples, with
+  # each example's CMakeLists.txt generated by projectGenerator -t cmake
+  build-cmake:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux64, runner: ubuntu-24.04 }
+          - { name: macos, runner: xcode-27 }
+          - { name: vs-x64, runner: windows-2022 }
+          - { name: linuxaarch64, runner: ubuntu-24.04-arm }
+          - { name: emscripten, runner: ubuntu-24.04 }
+    name: build-cmake (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: ccache
+        if: matrix.name != 'vs-x64' && matrix.name != 'emscripten'
+        uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: cmake-${{ matrix.name }}
+
+      - name: Libs, dependencies and projectGenerator (linux64)
+        if: matrix.name == 'linux64'
+        run: |
+          ./scripts/linux/download_libs.sh -t "$RELEASE" -a 64 -g 10
+          ./scripts/ci/linux/64/install.sh
+          sudo apt-get install -y ninja-build
+          mkdir -p ~/pg && cd ~/pg
+          curl -fsSL -o pg.tar.bz2 https://github.com/openframeworks/projectGenerator/releases/download/nightly/projectGenerator-linux.tar.bz2
+          tar -xjf pg.tar.bz2 && rm pg.tar.bz2
+          echo "PG=$(find ~/pg -type f -name 'projectGenerator*' -perm -u+x | head -1)" >> $GITHUB_ENV
+      - name: Build (linux64)
+        if: matrix.name == 'linux64'
+        run: scripts/ci/cmake/build.sh --pg "$PG" --platform linux64 -- -G Ninja
+
+      # 64-bit Raspberry Pi OS / arm64 Linux
+      - name: Libs, dependencies and projectGenerator (linuxaarch64)
+        if: matrix.name == 'linuxaarch64'
+        run: |
+          ./scripts/linux/download_libs.sh -t "$RELEASE" -a aarch64 -g 10
+          ./scripts/ci/linux/64/install.sh
+          # ofxOpenCv links -lblas -llapack on linux/aarch64 (rpi-build gets them from multistrap)
+          sudo apt-get install -y ninja-build libblas-dev liblapack-dev
+          mkdir -p ~/pg && cd ~/pg
+          curl -fsSL -o pg.tar.bz2 https://github.com/openframeworks/projectGenerator/releases/download/nightly/projectGenerator-linux-arm64.tar.bz2
+          tar -xjf pg.tar.bz2 && rm pg.tar.bz2
+          echo "PG=$(find ~/pg -type f -name 'projectGenerator*' -perm -u+x | head -1)" >> $GITHUB_ENV
+      - name: Build (linuxaarch64)
+        if: matrix.name == 'linuxaarch64'
+        run: scripts/ci/cmake/build.sh --pg "$PG" --platform linuxaarch64 -- -G Ninja -DOF_PRECOMPILED_HEADER=ON
+
+      # same emsdk image as build-emscripten; emcmake sets the Emscripten toolchain
+      - name: Libs and emsdk (emscripten)
+        if: matrix.name == 'emscripten'
+        run: |
+          ./scripts/emscripten/download_libs.sh -t $RELEASE
+          docker run -di --name emscripten -v $PWD:/src emscripten/emsdk:7.0.0 bash
+      - name: Build (emscripten)
+        if: matrix.name == 'emscripten'
+        run: >-
+          docker exec -i -e CMAKE_WRAPPER=emcmake
+          -e OF_CMAKE_EXAMPLES="templates/emptyExample:Release,Debug graphics/graphicsExample:Release gui/guiExample:Release"
+          emscripten bash -c "cd /src && scripts/ci/cmake/build.sh"
+
+      - name: Libs (macos)
+        if: matrix.name == 'macos'
+        run: |
+          ./scripts/osx/download_libs.sh -t $RELEASE
+          brew install ninja || true
+      - name: Build (macos)
+        if: matrix.name == 'macos'
+        run: scripts/ci/cmake/build.sh -- -G Ninja
+        env:
+          DEVELOPER_DIR: "/Applications/Xcode_27.1.app/Contents/Developer"
+
+      # unit tests in tests/ through CTest (Debug, like the makefile CI)
+      - name: Tests (ctest)
+        if: matrix.name == 'linux64' || matrix.name == 'macos'
+        run: |
+          cmake -S libs/openFrameworksCompiled/project/CMake -B build/cmake-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOF_BUILD_TESTS=ON
+          cmake --build build/cmake-tests --parallel
+          if [ "$RUNNER_OS" = "Linux" ]; then RUN="xvfb-run -a"; fi
+          $RUN ctest --test-dir build/cmake-tests --output-on-failure --timeout 300
+        env:
+          DEVELOPER_DIR: "/Applications/Xcode_27.1.app/Contents/Developer"
+
+      - uses: msys2/setup-msys2@v2
+        if: matrix.name == 'vs-x64'
+        with:
+          update: true
+          install: >-
+            git
+            unzip
+      - name: Libs and projectGenerator (vs-x64)
+        if: matrix.name == 'vs-x64'
+        shell: msys2 {0}
+        run: ./scripts/ci/vs/install.sh -a x64
+      - name: Build (vs-x64)
+        if: matrix.name == 'vs-x64'
+        shell: bash
+        run: scripts/ci/cmake/build.sh --pg "$PWD/projectGenerator/projectGenerator.exe" --platform vs -- -G "Visual Studio 17 2022" -A x64 -DOF_PRECOMPILED_HEADER=ON
+
+  build-vs:
+    needs: changes
+    if: needs.changes.outputs.vs == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64, ARM64EC]
+        vsYear: [2022, 2026]
+        include:
+          - vsYear: 2022
+            runner: windows-2022
+            toolset: v143
+            installFlag: ""
+          - vsYear: 2026
+            runner: windows-2025-vs2026
+            toolset: v145
+            installFlag: "--vs2026"
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7.0.1
+      - uses: msys2/setup-msys2@v2.33.0
+        with:
+          update: true
+          install: >-
+            git
+            unzip
+      # - name: Determine Release
+      #   id: vars
+      #   shell: bash
+      #   run: |
+      #     if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+      #       echo "RELEASE=${{ github.ref_name }}" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+      #       echo "RELEASE=nightly" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/bleeding" ]]; then
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     else
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     fi
+      - name: Install dependencies
+        shell: msys2 {0}
+        run: ./scripts/ci/vs/install.sh ${{ matrix.installFlag }} -a ${{ matrix.platform }}
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Build DEBUG and RELEASE emptyExample
+        working-directory: ${{env.GITHUB_WORKSPACE}}
+        run: |
+          msbuild examples/templates/emptyExample/emptyExample.vcxproj /p:Configuration=Debug /p:Platform=${{ matrix.platform }} /p:PlatformToolset=${{ matrix.toolset }}
+          msbuild examples/templates/emptyExample/emptyExample.vcxproj /p:Configuration=Release /p:Platform=${{ matrix.platform }} /p:PlatformToolset=${{ matrix.toolset }}
+      - name: Build DEBUG and RELEASE allAddonsExample
+        working-directory: ${{env.GITHUB_WORKSPACE}}
+        run: |
+          msbuild examples/templates/allAddonsExample/allAddonsExample.vcxproj /p:Configuration=Debug /p:Platform=${{ matrix.platform }} /p:PlatformToolset=${{ matrix.toolset }}
+          msbuild examples/templates/allAddonsExample/allAddonsExample.vcxproj /p:Configuration=Release /p:Platform=${{ matrix.platform }} /p:PlatformToolset=${{ matrix.toolset }}
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  rpi-build:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cfg:
+          - {
+              libs: armv6l,
+              multistrap_arch: armhf,
+              suffix: arm-linux-gnueabihf,
+              alladdons: 1,
+            }
+          # - {
+          #     libs: armv7l,
+          #     multistrap_arch: armhf,
+          #     suffix: arm-linux-gnueabihf,
+          #     alladdons: 1,
+          #   }
+          - {
+              libs: aarch64,
+              multistrap_arch: arm64,
+              suffix: aarch64-linux-gnu,
+              alladdons: 1,
+            }
+    env:
+      ARCH: ${{matrix.cfg.libs}}
+      MULTISTRAP_ARCH: ${{matrix.cfg.multistrap_arch}}
+      ALLADDONSEXAMPLE: ${{matrix.cfg.alladdons}}
+    steps:
+      - name: Cache Packages
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: multistrap unzip gcc-${{matrix.cfg.suffix}} g++-${{matrix.cfg.suffix}}
+          version: 1.0
+      - uses: actions/checkout@v7.0.1
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: ${{ matrix.cfg.libs }}
+      # - name: Determine Release
+      #   id: vars
+      #   shell: bash
+      #   run: |
+      #     if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+      #       echo "RELEASE=${{ github.ref_name }}" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+      #       echo "RELEASE=nightly" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/bleeding" ]]; then
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     else
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     fi
+      - name: Download libs
+
+        run: ./scripts/linux/download_libs.sh -t $RELEASE -a ${{matrix.cfg.libs}} -g 10
+      - name: Check deployed libraries
+        run: bash scripts/ci/check_deployed_libs.sh --platform linux --arch ${{ matrix.cfg.libs }} --allow-incomplete
+      - name: Install dependencies
+        run: ./scripts/ci/linux/rpi/install.sh;
+      - name: LS
+        shell: bash
+        run: ls -alfR
+      - name: Build
+        run: |
+          if [ ! -f libs/glm/include/glm/vec2.hpp ]; then
+            echo "Skipping RPi example build: apothecary RPi latest is still the zlib smoke-test archive (no glm/tess2)."
+            echo "Library path check already verified lib/linux/${ARCH}."
+            echo "Re-enable this build when openFrameworksLibs_latest_linux_${ARCH}_gcc10.tar.bz2 includes the full Linux formula set."
+            exit 0
+          fi
+          ./scripts/ci/linux/rpi/build.sh;
+
+
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  build-ios-tvos:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: xcode-27
+    strategy:
+      matrix:
+        cfg:
+          - { target: ios, libs: macos }
+          - { target: tvos, libs: macos }
+    env:
+      TARGET: ${{matrix.cfg.target}}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: ${{ matrix.cfg.target }}-${{ matrix.cfg.libs }}
+      # - name: Determine Release
+      #   id: vars
+      #   shell: bash
+      #   run: |
+      #     if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+      #       echo "RELEASE=${{ github.ref_name }}" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+      #       echo "RELEASE=nightly" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/bleeding" ]]; then
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     else
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     fi
+      - name: Download libs
+        run: ./scripts/${{matrix.cfg.libs}}/download_libs.sh -t $RELEASE
+      - name: install
+        run: ./scripts/ci/$TARGET/install.sh
+      - name: Build
+        run: ./scripts/ci/$TARGET/build.sh;
+
+        env:
+          DEVELOPER_DIR: "/Applications/Xcode_27.1.app/Contents/Developer"
+
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  build-linux:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cfg:
+          # - {target: linux, arch: 64, gcc: 6}
+          - {target: linux, arch: 64, gcc: 14}
+          - {target: linux, arch: 64, gcc: 10}
+    env:
+      TARGET: ${{matrix.cfg.target}}
+      GCC: ${{matrix.cfg.gcc}}
+      ARCH: ${{matrix.cfg.arch}}
+    steps:
+      # handled by the install script now
+      #      - name: Remove Old lib-unwind
+      #        run: if [ "$TARGET" = "linux64" ]; then
+      #          sudo apt-get remove libunwind-14 -y;
+      #          fi
+      - name: Cache Packages
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: aptitude aptitude-common libboost-iostreams1.83.0 libcwidget4 libsigc++-2.0-0v5 libxapian30 fonts-wine{a} libasound2-plugins{a} libcapi20-3t64{a} libosmesa6{a} libpcsclite1{a} libspeexdsp1{a} libwine{a} libxkbregistry0{a} libz-mingw-w64{a} wine{a} wine64 wget2 make libjack-jackd2-0 libjack-jackd2-dev freeglut3-dev libasound2-dev libxmu-dev libxxf86vm-dev g++ libgl1-mesa-dev libglu1-mesa-dev libraw1394-dev libudev-dev libdrm-dev libglew-dev libopenal-dev libsndfile1-dev libfreeimage-dev libcairo2-dev libfreetype6-dev libpulse-dev libusb-1.0-0-dev libgtk2.0-dev libopencv-dev libassimp-dev librtaudio-dev gdb libglfw3-dev liburiparser-dev libpugixml-dev libgconf-2-4 libgtk2.0-0 libpoco-dev libxcursor-dev libxi-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-libav gstreamer1.0-pulseaudio gstreamer1.0-x gstreamer1.0-plugins-bad gstreamer1.0-alsa gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+          version: 1.0
+      # - name: Determine Release
+      #   id: vars
+      #   shell: bash
+      #   run: |
+      #     if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+      #       echo "RELEASE=${{ github.ref_name }}" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+      #       echo "RELEASE=nightly" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/bleeding" ]]; then
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     else
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     fi
+      - uses: actions/checkout@v7.0.1
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: ${{ matrix.cfg.target }}
+
+      - name: Install dependencies
+        run: ./scripts/ci/$TARGET/$ARCH/install.sh;
+
+      - name: Download libs
+        run: ./scripts/linux/download_libs.sh -t "$RELEASE" -a "$ARCH" -g "$GCC"
+
+      - name: Library path check
+        run: |
+          echo "=== lib/linux/${{ matrix.cfg.arch }} ==="
+          find libs -type d -path "*/lib/linux/${{ matrix.cfg.arch }}" | sort
+          echo "=== glm ==="; test -f libs/glm/include/glm/vec2.hpp
+          echo "=== tess2 ==="; ls -lh libs/tess2/lib/linux/${{ matrix.cfg.arch }}
+          echo "=== zlib ==="; ls -lh libs/zlib/lib/linux/${{ matrix.cfg.arch }}
+          echo "=== system curl ==="; curl --version 2>&1 | head -n1
+
+
+      - name: Check deployed libraries
+        run: bash scripts/ci/check_deployed_libs.sh --platform linux --arch ${{ matrix.cfg.arch }}
+
+      - name: Build
+        run: |
+          if [ "$TARGET" = "linux" ]; then
+            scripts/ci/$TARGET/$ARCH/build.sh;
+            scripts/ci/$TARGET/$ARCH/run_tests.sh;
+          else
+            scripts/ci/$TARGET/$ARCH/build.sh;
+          fi
+
+  build-linux-64-22-04:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cfg:
+          - {target: linux, arch: 64, gcc: 10}
+    env:
+      TARGET: ${{matrix.cfg.target}}
+      GCC: ${{matrix.cfg.gcc}}
+      ARCH: ${{matrix.cfg.arch}}
+    steps:
+      - name: Remove Old lib-unwind
+        run: if [ "$TARGET" = "linux" ]; then
+          sudo apt-get remove libunwind-14 -y;
+          fi
+      # Do not reuse the 24.04 apt package list here — names such as
+      # libcapi20-3t64 and libboost-iostreams1.83.0 are not on 22.04.
+      # install_dependencies.sh (via ci/linux/64/install.sh) is the source of truth.
+
+      - uses: actions/checkout@v7.0.1
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: ${{ matrix.cfg.target }}-2204
+
+      - name: Install dependencies
+        run: ./scripts/ci/$TARGET/$ARCH/install.sh;
+
+      - name: Download libs
+        run: ./scripts/linux/download_libs.sh -t "$RELEASE" -a "$ARCH" -g "$GCC"
+
+      - name: Check deployed libraries
+        run: bash scripts/ci/check_deployed_libs.sh --platform linux --arch ${{ matrix.cfg.arch }}
+
+      - name: Build
+        run: |
+          if [ "$TARGET" = "linux" ]; then
+            scripts/ci/$TARGET/$ARCH/build.sh;
+            scripts/ci/$TARGET/$ARCH/run_tests.sh;
+          else
+            scripts/ci/$TARGET/$ARCH/build.sh;
+          fi
+
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  # build-linux64-2204:
+  #   runs-on: ubuntu-22.04
+  #   strategy:
+  #       matrix:
+  #         cfg:
+  #         - {target: linux64, libs: 64gcc6}
+  #   env:
+  #     TARGET: ${{matrix.cfg.target}}
+  #   steps:
+  #   - name: Remove Old lib-unwind
+  #     run: if [ "$TARGET" = "linux64" ]; then
+  #           sudo apt-get remove libunwind-14 -y;
+  #          fi
+  #   - name: Cache Packages
+  #     uses: awalsh128/cache-apt-pkgs-action@latest
+  #     with:
+  #       packages: aptitude aptitude-common libboost-iostreams1.83.0 libcwidget4 libsigc++-2.0-0v5 libxapian30 fonts-wine{a} libasound2-plugins{a} libcapi20-3t64{a} libosmesa6{a} libpcsclite1{a} libspeexdsp1{a} libwine{a} libxkbregistry0{a} libz-mingw-w64{a} wine{a} wine64 wget2 make libjack-jackd2-0 libjack-jackd2-dev freeglut3-dev libasound2-dev libxmu-dev libxxf86vm-dev g++ libgl1-mesa-dev libglu1-mesa-dev libraw1394-dev libudev-dev libdrm-dev libglew-dev libopenal-dev libsndfile1-dev libfreeimage-dev libcairo2-dev libfreetype6-dev libpulse-dev libusb-1.0-0-dev libgtk2.0-dev libopencv-dev libassimp-dev librtaudio-dev gdb libglfw3-dev liburiparser-dev libpugixml-dev libgconf-2-4 libgtk2.0-0 libpoco-dev libxcursor-dev libxi-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-libav gstreamer1.0-pulseaudio gstreamer1.0-x gstreamer1.0-plugins-bad gstreamer1.0-alsa gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+  #       version: 1.0
+
+  #   - uses: actions/checkout@v7.0.1
+  #   - name: ccache
+  #     uses: hendrikmuhs/ccache-action@v1.2.24
+  #     with:
+  #       key: ${{ matrix.cfg.target }}-${{ matrix.cfg.libs }}
+
+  #   - name: Download libs
+  #     run: ./scripts/linux/download_libs.sh -a ${{matrix.cfg.libs}}
+  #   - name: Install dependencies
+  #     run: ./scripts/ci/$TARGET/install.sh;
+  #   - name: Build
+  #     run: if [ "$TARGET" = "linux64" ]; then
+  #           scripts/ci/linux64/build.sh;
+  #           scripts/ci/$TARGET/run_tests.sh;
+  #          else
+  #           scripts/ci/$TARGET/build.sh;
+  #          fi
+
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+  build-macos:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    runs-on: xcode-27
+    strategy:
+      matrix:
+        cfg:
+          - { target: osx, opt: "xcode" }
+          - { target: osx, opt: "makefiles" }
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: ${{ matrix.cfg.target }}-${{ matrix.cfg.opt }}
+
+      # - name: Determine Release
+      #   id: vars
+      #   shell: bash
+      #   run: |
+      #     if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+      #       echo "RELEASE=${{ github.ref_name }}" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+      #       echo "RELEASE=nightly" >> $GITHUB_ENV
+      #     elif [[ "${{ github.ref }}" == "refs/heads/bleeding" ]]; then
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     else
+      #       echo "RELEASE=latest" >> $GITHUB_ENV
+      #     fi
+
+      - name: Download libs
+        run: ./scripts/${{ matrix.cfg.target }}/download_libs.sh -t $RELEASE
+
+      - name: Curl library check (before tests)
+        run: |
+          echo "=== libs/curl ==="; ls -lh libs/curl/lib/*/* 2>&1 | head -n 30
+          echo "=== curl ver ==="; cat libs/curl/include/curl/curlver.h 2>&1 | grep LIBCURL_VERSION | head -n 5
+          echo "=== openssl ==="; cat libs/openssl/include/openssl/opensslv.h 2>&1 | grep OPENSSL_VERSION_MAJOR | head -n 5
+          echo "=== apothecary curl protocols ==="; strings libs/curl/lib/macos/curl.xcframework/macos-arm64_x86_64/curl.a 2>&1 | grep -i "_Curl_http" | head -n 5; echo "http? $(strings libs/curl/lib/macos/curl.xcframework/macos-arm64_x86_64/curl.a 2>&1 | grep -q _Curl_http && echo yes || echo no)"
+          echo "=== system curl ==="; curl --version 2>&1 | head -n1
+
+      - name: Build
+        run: if [ ${{ matrix.cfg.opt }} = "xcode" ]; then
+          scripts/ci/${{ matrix.cfg.target }}/build.sh ${{ matrix.cfg.opt }};
+          else
+          scripts/ci/${{ matrix.cfg.target }}/run_tests.sh;
+          fi
+        env:
+          DEVELOPER_DIR: "/Applications/Xcode_27.1.app/Contents/Developer"
+
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  build-android:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cfg:
+          - { target: android, opt: arm64-v8a }
+          - { target: android, opt: x86_64 }
+          - { target: android, opt: armeabi-v7a }
+
+    env:
+      TARGET: ${{ matrix.cfg.target }}
+      ARCH: ${{ matrix.cfg.opt }}
+      ANDROID_SDK_ROOT: $ANDROID_HOME
+      # NDK r30 LTS is installed on ubuntu-24.04 at $ANDROID_HOME/ndk/$NDK.
+      # cmake.sh uses that path. Gradle ndkVersion matches. Min API stays 25.
+      NDK: "30.0.16248370"
+      ANDROID_API: "25"
+
+    steps:
+      - name: checkout openFrameworks
+        uses: actions/checkout@v7.0.1
+
+      - name: Set Up JDK 17
+        uses: actions/setup-java@v6.1.0
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Download Libraries
+        run: ./of update libs android
+
+      - name: Build openFrameworks Core - Debug
+        run: |
+          cd libs/openFrameworksCompiled/project/android/
+          gradle wrapper
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Build openFrameworks Core - CMake
+        run: |
+          cd libs/openFrameworksCompiled/project/android/
+          ./cmake.sh ${ARCH}
+
+      - name: Check if openFrameworks output Exists
+        run: |
+          LIB_PATH="libs/openFrameworksCompiled/lib/android/${ARCH}/libopenFrameworksAndroid.so"
+          if [ -f "$LIB_PATH" ]; then
+            echo "Build Success - [$LIB_PATH]"
+          else
+            echo "ERROR: Build Failed not found: [$LIB_PATH]"
+            exit 1
+          fi
+
+      - name: Build Android examples
+        run: scripts/ci/android/build_examples.sh "$ARCH"
+
+  # Merge gate: skipped jobs (path filter) are OK; any failure fails the PR.
+  # Point branch protection at this job instead of every matrix cell.
+  CI:
+    needs:
+      - changes
+      - build-emscripten
+      - build-msys2
+      - build-cmake
+      - build-vs
+      - rpi-build
+      - build-ios-tvos
+      - build-linux
+      - build-linux-64-22-04
+      - build-macos
+      - build-android
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Merge gate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          failed = [name for name, job in needs.items() if job.get("result") == "failure"]
+          if failed:
+              print("failed:", ", ".join(failed))
+              sys.exit(1)
+          for name, job in sorted(needs.items()):
+              print(f"{name}: {job.get('result')}")
+          PY

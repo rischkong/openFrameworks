@@ -620,8 +620,8 @@ void ofxCvImage::transform( float angle, float centerX, float centerY,
 		return;		
 	}	
 													
-    float sina = sin(angle * DEG_TO_RAD);
-    float cosa = cos(angle * DEG_TO_RAD);
+    float sina = std::sin(glm::radians(angle));
+    float cosa = std::cos(glm::radians(angle));
     CvMat*  transmat = cvCreateMat( 2,3, CV_32F );
     cvmSet( transmat, 0,0, scaleX*cosa );
     cvmSet( transmat, 0,1, scaleY*sina );
@@ -654,11 +654,17 @@ void ofxCvImage::undistort( float radialDistX, float radialDistY,
 #ifdef USE_OLD_CV
     cvUndistort2( cvImage, cvImageTemp, &_a, &_k, 0 );
 #else
-    cv::Mat src = cv::cvarrToMat(cvImage), dst = cv::cvarrToMat(cvImageTemp);
-    cv::Mat A = cv::cvarrToMat(&_a), distCoeffs = cv::cvarrToMat(&_k);
+    cv::Mat src = ofxCvToMat(cvImage);
+    cv::Mat dst = ofxCvToMat(cvImageTemp);
+    cv::Mat A = ofxCvToMat(&_a), distCoeffs = ofxCvToMat(&_k);
 
     CV_Assert( src.size() == dst.size() && src.type() == dst.type() );
     cv::undistort( src, dst, A, distCoeffs );
+#if CV_MAJOR_VERSION >= 5
+    if(dst.data != ofxCvToMat(cvImageTemp).data) {
+        dst.copyTo(ofxCvToMat(cvImageTemp));
+    }
+#endif
 #endif // USE_OLD_CV
 	swapTemp();
     flagImageChanged();
@@ -846,12 +852,12 @@ void  ofxCvImage::resetImageROI( IplImage* img ) {
 
 //--------------------------------------------------------------------------------
 void ofxCvImage::setFromPixels( const ofPixels & pixels ){
-	setFromPixels(pixels.getData(),pixels.getWidth(),pixels.getHeight());
+	setFromPixels(pixels.getData(),static_cast<int>(pixels.getWidth()),static_cast<int>(pixels.getHeight()));
 }
 
 //--------------------------------------------------------------------------------
 void ofxCvImage::setRoiFromPixels( const ofPixels & pixels ){
-	setRoiFromPixels(pixels.getData(),pixels.getWidth(),pixels.getHeight());
+	setRoiFromPixels(pixels.getData(),static_cast<int>(pixels.getWidth()),static_cast<int>(pixels.getHeight()));
 }
 
 //--------------------------------------------------------------------------------

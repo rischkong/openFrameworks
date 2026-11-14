@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# FreeImage is supplied by Apothecary via scripts/linux/download_libs.sh.
 
 if [ $EUID != 0 ]; then
 	echo "this script must be run as root"
@@ -37,12 +38,36 @@ fi
 
 
 echo "installing OF dependencies"
-apt-get install freeglut3-dev libasound2-dev libxmu-dev libxxf86vm-dev g++ libgl1-mesa-dev libglu1-mesa-dev libraw1394-dev libudev-dev libdrm-dev libglew-dev libopenal-dev libsndfile-dev libfreeimage-dev libcairo2-dev libfreetype6-dev libssl-dev libpulse-dev libusb-1.0-0-dev libgtk${GTK_VERSION}-dev libopencv-dev libegl1-mesa-dev libgles1 libgles2-mesa-dev libassimp-dev librtaudio-dev libboost-filesystem-dev libglfw3-dev  liburiparser-dev libcurl4-openssl-dev libpugixml-dev libpoco-dev libgconf-2-4
+apt-get update
+apt-get install -y \
+  freeglut3-dev libasound2-dev libxmu-dev libxxf86vm-dev g++ \
+  libgl1-mesa-dev libglu1-mesa-dev libraw1394-dev libudev-dev libdrm-dev \
+  libglew-dev libopenal-dev libsndfile-dev libcairo2-dev \
+  libfreetype6-dev libssl-dev libpulse-dev libusb-1.0-0-dev \
+  libgtk${GTK_VERSION}-dev libopencv-dev \
+  libegl1-mesa-dev libgles1 libgles2-mesa-dev \
+  libassimp-dev librtaudio-dev libglfw3-dev \
+  liburiparser-dev libcurl4-openssl-dev libpugixml-dev libpoco-dev \
+  brotli liblapack-dev libblas-dev \
+  libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
+  x11proto-dev libwayland-dev wayland-protocols libxkbcommon-dev libxkbcommon-x11-dev \
+  libdecor-0-dev libglvnd-dev mesa-utils ccache
+
 exit_code=$?
 if [ $exit_code != 0 ]; then
-    echo "error installing dependencies, there could be an error with your internet connection"
-    echo "if the error persists, please report an issue in github: http://github.com/openframeworks/openFrameworks/issues"
-	exit $exit_code
+  echo "error installing dependencies, there could be an error with your internet connection"
+  echo "if the error persists, please report an issue in github: http://github.com/openframeworks/openFrameworks/issues"
+  exit $exit_code
+fi
+
+# Optional: gum (nicer of.sh interactive menu) — only if already in apt's repos.
+# Not in default Debian repos as of writing; we don't add third-party repos
+# automatically. If you want it, see https://github.com/charmbracelet/gum#installation
+if apt-cache show gum &>/dev/null; then
+  echo "Package gum is available. Installing..."
+  apt-get install -y gum
+else
+  echo "gum not found in configured apt repos - skipping (optional, used for of.sh's nicer interactive menu)"
 fi
 
 echo "installing gstreamer"
@@ -70,15 +95,15 @@ if [ "$OS_CODENAME" = "7 (wheezy)" ]; then
     sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 1 --force
 fi
 
-# Update addon_config.mk files to use OpenCV 3 or 4 depending on what's installed
+# Update addon_config.mk files to use OpenCV 3, 4 or 5 depending on what's installed
 addons_dir="$(readlink -f "$ROOT/../../../addons")"
-$(pkg-config opencv4 --exists)
-exit_code=$?
-if [ $exit_code != 0 ]; then
-	echo "Updating ofxOpenCV to use openCV3"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv4(.*)$/ADDON_PKG_CONFIG_LIBRARIES =\1opencv\2/' "$addons_dir/ofxOpenCv/addon_config.mk"
-else
+if pkg-config opencv5 --exists; then
+	echo "Updating ofxOpenCV to use openCV5"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv5/' "$addons_dir/ofxOpenCv/addon_config.mk"
+elif pkg-config opencv4 --exists; then
 	echo "Updating ofxOpenCV to use openCV4"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv\s/ADDON_PKG_CONFIG_LIBRARIES =\1opencv4 /g' "$addons_dir/ofxOpenCv/addon_config.mk"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv$/ADDON_PKG_CONFIG_LIBRARIES =\1opencv4/g' "$addons_dir/ofxOpenCv/addon_config.mk"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv4/' "$addons_dir/ofxOpenCv/addon_config.mk"
+else
+	echo "Updating ofxOpenCV to use openCV3"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv/' "$addons_dir/ofxOpenCv/addon_config.mk"
 fi

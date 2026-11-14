@@ -10,19 +10,16 @@
 
 #pragma once
 
+// MARK: Optimization possible if moving functionality to cpp files in operators, forward declarator in ofVec3f
 #include "ofVec3f.h"
 #include "ofVec4f.h"
-#include "ofConstants.h"
-#include <cmath>
 
 #if (_MSC_VER)       
 // make microsoft visual studio complain less about double / float conversion.
 #pragma warning(disable : 4244)
 #endif
 
-
 class ofMatrix4x4;
-
 
 class ofQuaternion {
 public:
@@ -103,8 +100,9 @@ public:
     inline float length() const;
     
     /// \brief Length of the quaternion = vec . vec
-    inline float length2() const;
-    
+	inline float lengthSquared() const;
+	[[deprecated("use lengthSquare")]] inline float length2() const { return lengthSquared(); };
+	
     /// \brief Conjugate
     inline ofQuaternion conj() const;
     
@@ -459,15 +457,13 @@ const ofQuaternion ofQuaternion::operator -() const {
 
 //----------------------------------------
 float ofQuaternion::length() const {
-    return sqrt(_v.x*_v.x + _v.y*_v.y + _v.z*_v.z + _v.w*_v.w);
+    return std::sqrt(_v.x*_v.x + _v.y*_v.y + _v.z*_v.z + _v.w*_v.w);
 }
-
 
 //----------------------------------------
-float ofQuaternion::length2() const {
-    return _v.x*_v.x + _v.y*_v.y + _v.z*_v.z + _v.w*_v.w;
+float ofQuaternion::lengthSquared() const {
+	return _v.x*_v.x + _v.y*_v.y + _v.z*_v.z + _v.w*_v.w;
 }
-
 
 //----------------------------------------
 ofQuaternion ofQuaternion::conj() const {
@@ -477,7 +473,7 @@ ofQuaternion ofQuaternion::conj() const {
 
 //----------------------------------------
 const ofQuaternion ofQuaternion::inverse() const {
-    return conj() / length2();
+    return conj() / lengthSquared();
 }
 
 
@@ -496,7 +492,7 @@ ofVec3f ofQuaternion::operator*(const ofVec3f& v) const {
 
 void ofQuaternion::normalize(){
 	float len = _v.w*_v.w + _v.x*_v.x + _v.y*_v.y + _v.z*_v.z;
-	float factor = 1.0f / sqrt(len);
+	float factor = 1.0f / std::sqrt(len);
 	_v.x *= factor;
 	_v.y *= factor;
 	_v.z *= factor;

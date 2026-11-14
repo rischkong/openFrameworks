@@ -1,7 +1,9 @@
 #pragma once
 
+// MARK: ofConstants FS
 #include "ofConstants.h"
 #include <functional>
+#include <vector>
 
 class ofSoundBuffer;
 

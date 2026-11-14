@@ -16,8 +16,9 @@
     #define USE_OLD_CV
 #else
     #include "opencv2/opencv.hpp"
-    #include "opencv2/imgproc/imgproc_c.h"
 #endif
+// OpenCV 4: imgproc_c.h. OpenCV 5: IplImage/cv* shims in ofxCvCompat.h.
+#include "ofxCvCompat.h"
 
 #include <vector>
 #include "ofMain.h"

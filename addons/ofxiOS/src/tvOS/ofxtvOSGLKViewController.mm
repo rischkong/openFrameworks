@@ -4,8 +4,8 @@
 //  Created by Dan Rosser on 10/3/18.
 
 #include "ofxtvOSGLKViewController.h"
+#if defined(TARGET_OF_IOS) && defined(TARGET_OF_TVOS) && !defined(TARGET_OF_WATCHOS) && !defined(TARGET_OF_XROS)
 #include "ofxiOSGLKView.h"
-
 @interface ofxtvOSGLKViewController() <EAGLKViewDelegate, GLKViewControllerDelegate> {
     UITapGestureRecognizer *tapRecognizer;
 }
@@ -39,6 +39,13 @@
     
     GLKView *view = (GLKView *)self.view;
     view.context = [self.glView context];
+    // GLKViewController draws into its own GLKView, so it needs the drawable
+    // settings OF configured on glView (depth, stencil, colour, MSAA, scale)
+    view.drawableColorFormat = self.glView.drawableColorFormat;
+    view.drawableDepthFormat = self.glView.drawableDepthFormat;
+    view.drawableStencilFormat = self.glView.drawableStencilFormat;
+    view.drawableMultisample = self.glView.drawableMultisample;
+    view.contentScaleFactor = self.glView.contentScaleFactor;
     self.delegate = self;
     self.preferredFramesPerSecond = 60; //default
     [self.glView setup];
@@ -142,3 +149,5 @@
 }
 
 @end
+
+#endif

@@ -1,16 +1,71 @@
 #include "ofAppRunner.h"
 #include "ofURLFileLoader.h"
 #include "ofUtils.h"
+#include "ofFileUtils.h"
+#include "ofLog.h"
+#include <ctime>
+#include <cstdlib>
+#if !defined(_WIN32) && !defined(TARGET_OS_WIN32)
+#include <unistd.h>
+#endif
+#if defined(TARGET_OSX)
+#include <stdlib.h>
+#include <sys/random.h>
+#endif
 
 using std::map;
 using std::set;
 using std::string;
 
-#if !defined(TARGET_IMPLEMENTS_URL_LOADER)
+#if !defined(TARGET_IMPLEMENTS_URL_LOADER) && !defined(OF_NO_URL_LOADER)
 	#include <curl/curl.h>
 	#include "ofThreadChannel.h"
 	#include "ofThread.h"
-static bool curlInited = false;
+	static bool curlInited = false;
+
+	#define MAX_POSTFIELDS_SIZE (1024 * 1024)
+
+	#include <openssl/evp.h>
+	#include <openssl/pem.h>
+	#include <openssl/x509.h>
+	#include <openssl/x509v3.h>
+	#include <openssl/err.h>
+	#include <openssl/rand.h>
+	#include <openssl/crypto.h>
+	#include <openssl/provider.h>
+	#include <iostream>
+	#include <fstream>
+
+	#define CERTIFICATE_FILE "cacert.pem"
+	#define PRIVATE_KEY_FILE "cacert.key"
+
+	// OpenSSL 4.x static DRBG fallback - only for 4.0+ where provider DRBG fetch fails
+	#if OPENSSL_VERSION_MAJOR >= 4
+	static int custom_rand_seed(const void *buf, int num) { RAND_add(buf, num, (double)num); return 1; }
+	static int custom_rand_bytes(unsigned char *buf, int num) {
+	#if defined(TARGET_OSX)
+		if(getentropy(buf, (size_t)num)==0) return 1;
+		arc4random_buf(buf, (size_t)num);
+		return 1;
+	#else
+		for(int i=0;i<num;++i) buf[i]=(unsigned char)(rand() & 0xFF);
+		return 1;
+	#endif
+	}
+	static void custom_rand_cleanup(void) {}
+	static int custom_rand_add(const void *buf, int num, double entropy) { RAND_add(buf, num, entropy); return 1; }
+	static int custom_rand_pseudorand(unsigned char *buf, int num) { return custom_rand_bytes(buf, num); }
+	static int custom_rand_status(void) { return 1; }
+	static RAND_METHOD custom_rand_method = {
+		custom_rand_seed,
+		custom_rand_bytes,
+		custom_rand_cleanup,
+		custom_rand_add,
+		custom_rand_pseudorand,
+		custom_rand_status
+	};
+	#endif
+	
 #endif
 
 int ofHttpRequest::nextID = 0;
@@ -20,7 +75,8 @@ ofEvent<ofHttpResponse> & ofURLResponseEvent() {
 	return *event;
 }
 
-#if !defined(TARGET_IMPLEMENTS_URL_LOADER)
+#if !defined(TARGET_IMPLEMENTS_URL_LOADER) && !defined(OF_NO_URL_LOADER)
+std::mutex responseMutex;
 class ofURLFileLoaderImpl : public ofThread, public ofBaseURLFileLoader {
 public:
 	ofURLFileLoaderImpl();
@@ -32,6 +88,8 @@ public:
 	void remove(int id);
 	void clear();
 	void stop();
+	bool checkValidCertifcate(const std::string& cert_file);
+	void createSSLCertificate();
 	ofHttpResponse handleRequest(const ofHttpRequest & request);
 	int handleRequestAsync(const ofHttpRequest & request); // returns id
 
@@ -53,6 +111,16 @@ private:
 ofURLFileLoaderImpl::ofURLFileLoaderImpl() {
 	if (!curlInited) {
 		curl_global_init(CURL_GLOBAL_ALL);
+#if !defined(NO_OPENSSL)
+#if OPENSSL_VERSION_MAJOR >= 4
+		// OpenSSL 4.0 DRBG is in default provider - must load config/provider before RAND
+		OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG | OPENSSL_INIT_LOAD_CRYPTO_STRINGS | OPENSSL_INIT_ADD_ALL_CIPHERS | OPENSSL_INIT_ADD_ALL_DIGESTS, NULL);
+		OSSL_PROVIDER_load(NULL, "default");
+#endif
+		if(RAND_status() == 0) {
+			RAND_poll();
+		}
+#endif
 	}
 }
 
@@ -104,11 +172,124 @@ void ofURLFileLoaderImpl::start() {
 }
 
 void ofURLFileLoaderImpl::stop() {
+	if (isThreadRunning()) {
+		ofRemoveListener(ofEvents().update, this, &ofURLFileLoaderImpl::update);
+	}
 	stopThread();
 	requests.close();
 	responses.close();
 	waitForThread();
+	curl_global_cleanup();
 }
+
+
+bool ofURLFileLoaderImpl::checkValidCertifcate(const std::string & cert_file) {
+#if !defined(NO_OPENSSL)
+	try {
+		FILE * fp = fopen(cert_file.c_str(), "r");
+		if (!fp) return false;
+		X509 * cert = PEM_read_X509(fp, NULL, NULL, NULL);
+		fclose(fp);
+		if (!cert) return false;
+		time_t current_time = time(NULL);
+		int notBefore = X509_cmp_time(X509_get0_notBefore(cert), &current_time);
+		int notAfter = X509_cmp_time(X509_get0_notAfter(cert), &current_time);
+		X509_free(cert);
+		return (notBefore <= 0 && notAfter >= 0);
+	} catch (const std::exception & e) {
+		ofLogError("ofURLFileLoader") << "Exception in checkValidCertifcate: " << e.what();
+		return false;
+	} catch (...) {
+		ofLogError("ofURLFileLoader") << "Unknown error occurred in checkValidCertifcate.";
+		return false;
+	}
+#else
+	return false;
+#endif
+}
+
+
+void ofURLFileLoaderImpl::createSSLCertificate() {
+#if !defined(NO_OPENSSL)
+	try {
+		EVP_PKEY * pkey = nullptr;
+		X509 * x509 = nullptr;
+		EVP_PKEY_CTX * pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
+		if (!pkey_ctx) {
+			throw std::runtime_error("Error initializing key generation context");
+		}
+		if (EVP_PKEY_keygen_init(pkey_ctx) <= 0 || EVP_PKEY_CTX_set_rsa_keygen_bits(pkey_ctx, 2048) <= 0 || EVP_PKEY_keygen(pkey_ctx, &pkey) <= 0) {
+			EVP_PKEY_CTX_free(pkey_ctx);
+			throw std::runtime_error("Error generating RSA key");
+		}
+		EVP_PKEY_CTX_free(pkey_ctx);
+		x509 = X509_new();
+		if (!x509) {
+			EVP_PKEY_free(pkey);
+			throw std::runtime_error("Failed to create new X509 certificate");
+		}
+		ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+		X509_gmtime_adj(X509_get_notBefore(x509), 0);
+		X509_gmtime_adj(X509_get_notAfter(x509), 31536000L); // 1 year
+		X509_set_pubkey(x509, pkey);
+		X509_NAME * name = const_cast<X509_NAME *>(X509_get_subject_name(x509));
+		if (!name) {
+			X509_free(x509);
+			EVP_PKEY_free(pkey);
+			throw std::runtime_error("Failed to get subject name from X509 certificate");
+		}
+		X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (unsigned char *)"US", -1, -1, 0);
+		X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (unsigned char *)"Local Machine", -1, -1, 0);
+		X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char *)"Local Root CA", -1, -1, 0);
+		X509_set_issuer_name(x509, name);
+		if (X509_sign(x509, pkey, EVP_sha256()) == 0) {
+			X509_free(x509);
+			EVP_PKEY_free(pkey);
+			throw std::runtime_error("Error signing the certificate");
+		}
+		BIO * keyBio = BIO_new(BIO_s_mem());
+		BIO * certBio = BIO_new(BIO_s_mem());
+		if (!keyBio || !certBio) {
+			if (keyBio) BIO_free(keyBio);
+			if (certBio) BIO_free(certBio);
+			X509_free(x509);
+			EVP_PKEY_free(pkey);
+			throw std::runtime_error("Failed to create BIO objects for key/cert storage");
+		}
+		PEM_write_bio_PrivateKey(keyBio, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+		PEM_write_bio_X509(certBio, x509);
+		char * keyData = nullptr;
+		long keyLen = BIO_get_mem_data(keyBio, &keyData);
+		std::string keyStr(keyData, keyLen);
+		char * certData = nullptr;
+		long certLen = BIO_get_mem_data(certBio, &certData);
+		std::string certStr(certData, certLen);
+		ofBuffer keyBuffer, certBuffer;
+		keyBuffer.set(keyStr.c_str(), keyLen);
+		certBuffer.set(certStr.c_str(), certLen);
+		if (!ofDirectory::createDirectory("ssl")) {
+			ofLogWarning("ofURLFileLoader") << "Could not create ssl directory";
+		}
+		if (!ofBufferToFile(ofToDataPath(PRIVATE_KEY_FILE), keyBuffer)) {
+			throw std::runtime_error("Failed to save private key to file");
+		}
+		if (!ofBufferToFile(ofToDataPath(CERTIFICATE_FILE), certBuffer)) {
+			throw std::runtime_error("Failed to save certificate to file");
+		}
+		BIO_free(keyBio);
+		BIO_free(certBio);
+		EVP_PKEY_free(pkey);
+		X509_free(x509);
+		ofLogNotice("ofURLFileLoader") << "Root certificate and private key generated and saved";
+	} catch (const std::exception & e) {
+		ofLogError("ofURLFileLoader") << "Exception in createSSLCertificate: " << e.what();
+	} catch (...) {
+		ofLogError("ofURLFileLoader") << "Unknown error occurred in createSSLCertificate.";
+	}
+#endif
+}
+
+
 
 void ofURLFileLoaderImpl::threadedFunction() {
 	setThreadName("ofURLFileLoader " + ofToString(getThreadId()));
@@ -140,87 +321,222 @@ void ofURLFileLoaderImpl::threadedFunction() {
 
 namespace {
 size_t saveToFile_cb(void * buffer, size_t size, size_t nmemb, void * userdata) {
+	std::lock_guard<std::mutex> lock(responseMutex);
 	auto saveTo = (ofFile *)userdata;
 	saveTo->write((const char *)buffer, size * nmemb);
 	return size * nmemb;
 }
 
 size_t saveToMemory_cb(void * buffer, size_t size, size_t nmemb, void * userdata) {
+	std::lock_guard<std::mutex> lock(responseMutex);
 	auto response = (ofHttpResponse *)userdata;
 	response->data.append((const char *)buffer, size * nmemb);
 	return size * nmemb;
 }
 
 size_t readBody_cb(void * ptr, size_t size, size_t nmemb, void * userdata) {
+	std::lock_guard<std::mutex> lock(responseMutex);
 	auto body = (std::string *)userdata;
-
 	if (size * nmemb < 1) {
 		return 0;
 	}
-
 	if (!body->empty()) {
 		auto sent = std::min(size * nmemb, body->size());
 		memcpy(ptr, body->c_str(), sent);
 		*body = body->substr(sent);
 		return sent;
 	}
-
 	return 0; /* no more data left to deliver */
+}
+int transferProgress_cb(void * userdata, curl_off_t downloadTotal, curl_off_t downloaded, curl_off_t uploadTotal, curl_off_t uploaded) {
+	const auto & request = *static_cast<const ofHttpRequest *>(userdata);
+	if (request.method == ofHttpRequest::GET && downloadTotal > 0) {
+		request.progressCallback(request, static_cast<float>(downloaded) / static_cast<float>(downloadTotal));
+	} else if ((request.method == ofHttpRequest::PUT || request.method == ofHttpRequest::POST) && uploadTotal > 0) {
+		request.progressCallback(request, static_cast<float>(uploaded) / static_cast<float>(uploadTotal));
+	}
+	return 0;
 }
 }
 
 ofHttpResponse ofURLFileLoaderImpl::handleRequest(const ofHttpRequest & request) {
+#if !defined(NO_OPENSSL)
+#if OPENSSL_VERSION_MAJOR >= 4
+	// OpenSSL 4.0 static provider DRBG - fallback to arc4random when fetch fails
+	if(RAND_status()==0) {
+		OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG | OPENSSL_INIT_LOAD_CRYPTO_STRINGS | OPENSSL_INIT_ADD_ALL_CIPHERS | OPENSSL_INIT_ADD_ALL_DIGESTS, NULL);
+		OSSL_PROVIDER_load(NULL, "default");
+		if(RAND_status()==0) {
+			RAND_set_rand_method(&custom_rand_method);
+#ifdef DEBUG_CURL
+			ofLogVerbose("ofURLFileLoader") << "installed custom arc4random RAND_METHOD fallback";
+#endif
+		}
+	}
+#endif
+	for(int i=0; i<3 && RAND_status()==0; ++i) {
+		RAND_poll();
+		if(RAND_status()==0) {
+			unsigned char buf[256];
+#if defined(TARGET_OSX)
+			if(getentropy(buf, sizeof(buf)) == 0) {
+				RAND_add(buf, sizeof(buf), sizeof(buf));
+			} else {
+				arc4random_buf(buf, sizeof(buf));
+				RAND_add(buf, sizeof(buf), sizeof(buf));
+			}
+			OPENSSL_cleanse(buf, sizeof(buf));
+#endif
+			RAND_load_file("/dev/urandom", 256);
+			unsigned int seed = (unsigned int)time(nullptr) ^ (unsigned int)clock();
+#if !defined(_WIN32) && !defined(TARGET_OS_WIN32)
+			seed ^= (unsigned int)getpid();
+#endif
+			RAND_add(&seed, sizeof(seed), sizeof(seed));
+			OPENSSL_cleanse(&seed, sizeof(seed));
+			RAND_poll();
+		}
+	}
+#ifdef DEBUG_CURL
+	if(RAND_status()==0) {
+		unsigned long e = ERR_get_error();
+		char ebuf[256]={0};
+		ERR_error_string_n(e, ebuf, sizeof(ebuf));
+		ofLogError("ofURLFileLoader") << "RAND_status still 0 err=" << e << " " << ebuf;
+	}
+#endif
+#endif
 	std::unique_ptr<CURL, void (*)(CURL *)> curl = std::unique_ptr<CURL, void (*)(CURL *)>(curl_easy_init(), curl_easy_cleanup);
+	if (!curl) {
+		ofLogError("ofURLFileLoader") << "curl_easy_init() failed!";
+		return ofHttpResponse(request, -1, "CURL initialization failed");
+	}
 	curl_slist * headers = nullptr;
-	curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, true);
-	curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 2);
-	curl_easy_setopt(curl.get(), CURLOPT_URL, request.url.c_str());
-
-	// always follow redirections
+	curl_version_info_data *version = curl_version_info( CURLVERSION_NOW );
+	if(request.verbose) {
+		CURLcode ret = curl_easy_setopt(curl.get(), CURLOPT_VERBOSE, 1L);
+		if (ret != CURLE_OK) {
+			ofLogWarning() << "cURL error: " << curl_easy_strerror(ret);
+		}
+	}
+	// Always set User-Agent - some hosts (Cloudflare, GitHub) block empty UA and cause http->https redirect test to fail
+	if (version) {
+		std::string userAgent = std::string("curl/") + version->version;
+		curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, userAgent.c_str());
+	} else {
+		curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "curl/unknown");
+	}
+	if(version->features & CURL_VERSION_SSL) {
+		curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 1L);
+		curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 2L);
+	}
+	ofLogVerbose("ofURLFileLoader") << "Request URL: '" << request.url << "'";
+	CURLcode urlRes = curl_easy_setopt(curl.get(), CURLOPT_URL, request.url.c_str());
+	if(urlRes != CURLE_OK) {
+		ofLogError("ofURLFileLoader") << "CURLOPT_URL failed for '" << request.url << "': " << curl_easy_strerror(urlRes);
+		return ofHttpResponse(request, -1, curl_easy_strerror(urlRes));
+	}
 	curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, 20L);
+	// curl 7.85.0+ uses _STR variants (deprecated bitmask); guard for 8.21+ / 7.85+
+#if LIBCURL_VERSION_NUM >= 0x075500
+	curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+	curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "http,https");
+#else
+	curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+	curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+#endif
 
-	// Set content type and any other header
 	if (request.contentType != "") {
 		headers = curl_slist_append(headers, ("Content-Type: " + request.contentType).c_str());
 	}
+	if(request.close) {
+		headers = curl_slist_append(headers, "Connection: close");
+	}
+	// https://curl.se/libcurl/c/CURLOPT_ACCEPT_ENCODING.html
+	// the following is used for requesting specific compression encodings
+	// if the headers are set with the encodings, then curl will not decompress the received data
+	// leaving this here for future reference
+	//	std::string encodings = "Accept-Encoding: ";
+	//	bool first = true;
+	//
+	//	if (version->features & CURL_VERSION_BROTLI) {
+	//		encodings += "br";
+	//		first = false;
+	//	}
+	//	if (version->features & CURL_VERSION_LIBZ) {
+	//		if (!first) {encodings += ", ";}
+	//		encodings += "gzip";
+	//		first = false;
+	//	}
+	//	if( !first) {
+	//		ofLogVerbose("ofURLFileLoader :: encodings") << encodings;
+	//		headers = curl_slist_append(headers, encodings.c_str());
+	//	} else {
+	//		curl_easy_setopt(curl.get(), CURLOPT_ACCEPT_ENCODING, "");
+	//	}
+	/* enable all supported built-in compressions */
+	curl_easy_setopt(curl.get(), CURLOPT_ACCEPT_ENCODING, "");
+	
 	for (map<string, string>::const_iterator it = request.headers.cbegin(); it != request.headers.cend(); it++) {
 		headers = curl_slist_append(headers, (it->first + ": " + it->second).c_str());
 	}
 
-	curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers);
-
-	std::string body = request.body;
-
-	// set body if there's any
-	if (request.body != "") {
-		//		curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 1L); // Tis does PUT instead of POST
-		curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE, request.body.size());
-		curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, nullptr);
-		//curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, request.body.c_str());
-		curl_easy_setopt(curl.get(), CURLOPT_READFUNCTION, readBody_cb);
-		curl_easy_setopt(curl.get(), CURLOPT_READDATA, &body);
-	} else {
-		//		curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 0L);
-		curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE, 0);
-		//curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, nullptr);
-		curl_easy_setopt(curl.get(), CURLOPT_READFUNCTION, nullptr);
-		curl_easy_setopt(curl.get(), CURLOPT_READDATA, nullptr);
+	if (headers) {
+		curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers);
 	}
 	if (request.method == ofHttpRequest::GET) {
-		curl_easy_setopt(curl.get(), CURLOPT_HTTPGET, 1);
-		curl_easy_setopt(curl.get(), CURLOPT_POST, 0);
-	} else {
-		curl_easy_setopt(curl.get(), CURLOPT_POST, 1);
-		curl_easy_setopt(curl.get(), CURLOPT_HTTPGET, 0);
+		curl_easy_setopt(curl.get(), CURLOPT_HTTPGET, 1L);
+		curl_easy_setopt(curl.get(), CURLOPT_POST, 0L);
+		curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 0L);
+	}
+	else if (request.method == ofHttpRequest::PUT) {
+		curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 1L);
+		curl_easy_setopt(curl.get(), CURLOPT_POST, 0L);
+		curl_easy_setopt(curl.get(), CURLOPT_HTTPGET, 0L);
+	}
+	else if (request.method == ofHttpRequest::POST) {
+		curl_easy_setopt(curl.get(), CURLOPT_POST, 1L);
+		curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 0L);
+		curl_easy_setopt(curl.get(), CURLOPT_HTTPGET, 0L);
+	}
+	if (request.method != ofHttpRequest::GET) {
+		std::string body = request.body;
+		if (!request.body.empty()) {
+			if (request.method == ofHttpRequest::PUT || request.body.size() > MAX_POSTFIELDS_SIZE) { // If request is an upload (e.g., file upload)
+				curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 1L);
+				curl_easy_setopt(curl.get(), CURLOPT_READFUNCTION, readBody_cb);
+				curl_easy_setopt(curl.get(), CURLOPT_READDATA, &body);
+				curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE, 0L);
+			} else { // If request is a normal POST
+				curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE, request.body.size());
+				curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, request.body.c_str());
+			}
+		} else {
+			curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE, 0L);
+			curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, "");
+			curl_easy_setopt(curl.get(), CURLOPT_READFUNCTION, nullptr);
+			curl_easy_setopt(curl.get(), CURLOPT_READDATA, nullptr);
+		}
 	}
 
 	if (request.timeoutSeconds > 0) {
 		curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, request.timeoutSeconds);
 	}
+	if (request.headerOnly) {
+		curl_easy_setopt(curl.get(), CURLOPT_NOBODY, 1L);
+	}
 
 	// start request and receive response
 	ofHttpResponse response(request, 0, "");
 	CURLcode err = CURLE_OK;
+
+	if (request.progressCallback) {
+		curl_easy_setopt(curl.get(), CURLOPT_XFERINFOFUNCTION, transferProgress_cb);
+		curl_easy_setopt(curl.get(), CURLOPT_XFERINFODATA, &request);
+		curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 0L);
+	}
+
 	if (request.saveTo) {
 		ofFile saveTo(request.name, ofFile::WriteOnly, true);
 		curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &saveTo);
@@ -257,7 +573,10 @@ void ofURLFileLoaderImpl::update(ofEventArgs & args) {
 	ofHttpResponse response;
 	while (responses.tryReceive(response)) {
 		try {
-			response.request.done(response);
+			std::lock_guard<std::mutex> lock(responseMutex);
+			if (response.request.done) {
+				response.request.done(response);
+			} 
 		} catch (...) {
 		}
 
@@ -269,11 +588,54 @@ ofURLFileLoader::ofURLFileLoader()
 	: impl(new ofURLFileLoaderImpl) { }
 #endif
 
-#ifdef TARGET_EMSCRIPTEN
+#if defined(TARGET_EMSCRIPTEN) && !defined(OF_NO_URL_LOADER)
 	#include "ofxEmscriptenURLFileLoader.h"
 ofURLFileLoader::ofURLFileLoader()
 	: impl(new ofxEmscriptenURLFileLoader) { }
 #endif
+
+#if defined(OF_NO_URL_LOADER)
+// Built with OF_NO_URL_LOADER: no curl or OpenSSL in the core. Every request
+// fails with status -1; async requests send that response straight away.
+class ofURLFileLoaderDisabled : public ofBaseURLFileLoader {
+public:
+	ofHttpResponse get(const string & url) override {
+		return handleRequest(ofHttpRequest(url, url));
+	}
+	int getAsync(const string & url, const string & name) override {
+		return handleRequestAsync(ofHttpRequest(url, name));
+	}
+	ofHttpResponse saveTo(const string & url, const of::filesystem::path & path) override {
+		return handleRequest(ofHttpRequest(url, ofPathToString(path), true));
+	}
+	int saveAsync(const string & url, const of::filesystem::path & path) override {
+		return handleRequestAsync(ofHttpRequest(url, ofPathToString(path), true));
+	}
+	void remove(int id) override { }
+	void clear() override { }
+	void stop() override { }
+	ofHttpResponse handleRequest(const ofHttpRequest & request) override {
+		static bool warned = false;
+		if (!warned) {
+			ofLogWarning("ofURLFileLoader") << error;
+			warned = true;
+		}
+		return ofHttpResponse(request, -1, error);
+	}
+	int handleRequestAsync(const ofHttpRequest & request) override {
+		ofHttpResponse response = handleRequest(request);
+		ofNotifyEvent(ofURLResponseEvent(), response);
+		return request.getId();
+	}
+
+private:
+	const string error { "URL loading is disabled in this build of openFrameworks (OF_NO_URL_LOADER)" };
+};
+
+ofURLFileLoader::ofURLFileLoader()
+	: impl(new ofURLFileLoaderDisabled) { }
+#endif
+
 
 ofHttpResponse ofURLFileLoader::get(const string & url) {
 	return impl->get(url);
@@ -311,10 +673,16 @@ int ofURLFileLoader::handleRequestAsync(const ofHttpRequest & request) {
 	return impl->handleRequestAsync(request);
 }
 
+extern void (*ofURLFileLoaderShutdownHook)(); // ofAppRunner.cpp
+void ofURLFileLoaderShutdown();
+
 static bool initialized = false;
 static ofURLFileLoader & getFileLoader() {
 	static ofURLFileLoader * fileLoader = new ofURLFileLoader;
-	initialized = true;
+	if (!initialized) {
+		initialized = true;
+		ofURLFileLoaderShutdownHook = ofURLFileLoaderShutdown;
+	}
 	return *fileLoader;
 }
 
@@ -324,12 +692,14 @@ ofHttpRequest::ofHttpRequest()
 	, id(nextID++) {
 }
 
-ofHttpRequest::ofHttpRequest(const string & url, const string & name, bool saveTo)
+ofHttpRequest::ofHttpRequest(const string & url, const string & name, bool saveTo, bool autoClose, bool verbose)
 	: url(url)
 	, name(name)
 	, saveTo(saveTo)
+	, close(autoClose)
+	, verbose(verbose)
 	, method(GET)
-	, id(nextID++) {
+	, id(nextID++){
 }
 
 int ofHttpRequest::getId() const {

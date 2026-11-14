@@ -21,6 +21,8 @@ public:
 	const std::string & getType(){ return TYPE; }
 
     void setup();
+	
+	int getMaxTextureSize();
 
 	void startRender();
 	void finishRender();
@@ -43,6 +45,7 @@ public:
 	void drawElementsInstanced(const ofVbo & vbo, GLuint drawMode, int amt, int primCount) const;
 	void draw(const ofVboMesh & mesh, ofPolyRenderMode renderType) const;
 	void drawInstanced(const ofVboMesh & mesh, ofPolyRenderMode renderType, int primCount) const;
+	void drawBackgroundGradient(const ofFloatColor& start, const ofFloatColor& end, ofGradientMode mode) const;
 	ofPath & getPath();
 
 
@@ -111,7 +114,9 @@ public:
 	void setRectMode(ofRectMode mode);
 	ofRectMode getRectMode();
 	void setLineWidth(float lineWidth);
+	void setPointSize(float pointSize);
 	void setDepthTest(bool depthTest);
+	void setDepthWrite(bool write);
 	void setLineSmoothing(bool smooth);
 	void setBlendMode(ofBlendMode blendMode);
 	void enablePointSprites();
@@ -210,7 +215,7 @@ public:
 	void end(const ofFbo & fbo);
 
 	void bind(const ofFbo & fbo);
-#ifndef TARGET_OPENGLES
+#if !defined(TARGET_OPENGLES) || (defined(GL_ES_VERSION_3_0) && defined(TARGET_OPENGLES_3))
 	void bindForBlitting(const ofFbo & fboSrc, ofFbo & fboDst, int attachmentPoint);
 #endif
 	void unbind(const ofFbo & fbo);

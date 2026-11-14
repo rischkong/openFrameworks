@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# FreeImage is supplied by Apothecary via scripts/linux/download_libs.sh.
 
 SCRIPT_DIR="${BASH_SOURCE%/*}"
 if [[ ! -d "$SCRIPT_DIR" ]]; then SCRIPT_DIR="$PWD"; fi
@@ -36,7 +37,7 @@ function installPackages {
                 exit_code=$?
                 if [ $exit_code != 0 ]; then
                     echo "error installing ${pkg}, there could be an error with your internet connection"
-                    echo "if the error persists, please report an issue in github: http://github.com/openframeworks/openFrameworks/issues"
+                    echo "if the error persists, please report an issue in github: https://github.com/openframeworks/openFrameworks/issues"
                     exit $exit_code
                 fi
             elif [ $exit_code -eq 0 ]; then
@@ -44,14 +45,14 @@ function installPackages {
                 exit_code=$?
                 if [ $exit_code != 0 ]; then
                     echo "error installing ${pkg}, there could be an error with your internet connection"
-                    echo "if the error persists, please report an issue in github: http://github.com/openframeworks/openFrameworks/issues"
+                    echo "if the error persists, please report an issue in github: https://github.com/openframeworks/openFrameworks/issues"
                     exit $exit_code
                 fi
             else
                 echo "error installing ${pkg}"
                 echo $error
                 echo "this seems an error with your distribution repositories but you can also"
-                echo "report an issue in the openFrameworks github: http://github.com/openframeworks/openFrameworks/issues"
+                echo "report an issue in the openFrameworks github: https://github.com/openframeworks/openFrameworks/issues"
                 exit $exit_code
             fi
         fi
@@ -67,19 +68,40 @@ function installPackages {
 source /etc/os-release
 
 if [ "$ID" = "elementary" ]; then
-	# Gets ubuntu base version
-	RELEASE=$(lsb_release -r -u)
+	# Gets ubuntu base version: lsb_release -u, the upstream-release file, or the codename
+	if command -v lsb_release > /dev/null; then
+		RELEASE=$(lsb_release -r -s -u 2> /dev/null)
+	fi
+	if [ -z "$RELEASE" ] && [ -f /etc/upstream-release/lsb-release ]; then
+		RELEASE=$(grep DISTRIB_RELEASE /etc/upstream-release/lsb-release | cut -d "=" -f2)
+	fi
+	if [ -z "$RELEASE" ]; then
+		case "$UBUNTU_CODENAME" in
+			bionic) RELEASE=18.04 ;;
+			focal) RELEASE=20.04 ;;
+			jammy) RELEASE=22.04 ;;
+			noble) RELEASE=24.04 ;;
+		esac
+	fi
 elif [ "$ID" = "linuxmint" ]; then
 	# Gets ubuntu base version
 	RELEASE=$(cat /etc/upstream-release/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f2)
 else
-	RELEASE=$(lsb_release -r)
+	# VERSION_ID from /etc/os-release: lsb_release isn't on minimal installs (Docker, cloud images)
+	RELEASE=$VERSION_ID
 fi
 
-MAJOR_VERSION=$(echo $RELEASE | cut -f2 -d: | cut -f1 -d. | sed "s/\t//g")
-MINOR_VERSION=$(echo $RELEASE | cut -f2 -d: | cut -f2 -d.)
+MAJOR_VERSION=$(echo "$RELEASE" | cut -f1 -d.)
+MINOR_VERSION=$(echo "$RELEASE" | cut -f2 -d.)
+if ! [[ "$MAJOR_VERSION" =~ ^[0-9]+$ && "$MINOR_VERSION" =~ ^[0-9]+$ ]]; then
+	echo "Couldn't detect the Ubuntu version (got '$RELEASE')." >&2
+	echo "Check VERSION_ID in /etc/os-release, or install lsb-release: sudo apt-get install lsb-release" >&2
+	exit 1
+fi
 
 echo "Running on ubuntu ${MAJOR_VERSION}.${MINOR_VERSION}"
+# 04 -> 4: no octal in the numeric tests below
+MINOR_VERSION=$((10#$MINOR_VERSION))
 
 if [ $MAJOR_VERSION -lt 12 ]; then
     echo "Your ubuntu version is too old try using an older version of openFrameworks or updating your system"
@@ -87,17 +109,12 @@ if [ $MAJOR_VERSION -lt 12 ]; then
 elif [ $MAJOR_VERSION -lt 13 ]; then
     add-apt-repository ppa:ubuntu-toolchain-r/test --yes
     add-apt-repository ppa:gstreamer-developers/ppa --yes
-    add-apt-repository ppa:boost-latest/ppa --yes
     CXX_VER=-4.9
-    BOOST_VER=1.55
 elif [[ $MAJOR_VERSION -lt 14 || ($MAJOR_VERSION -eq 14 && $MINOR_VERSION -eq 4) ]]; then
     add-apt-repository ppa:ubuntu-toolchain-r/test --yes
-    add-apt-repository ppa:boost-latest/ppa --yes
     CXX_VER=-4.9
-    BOOST_VER=1.55
 else
     CXX_VER=
-    BOOST_VER=
 fi
 
 apt-get update
@@ -137,13 +154,13 @@ if [ $exit_code = 0 ]; then
     GSTREAMER_FFMPEG=gstreamer${GSTREAMER_VERSION}-libav
 fi
 
-GTK_VERSION=2.0
+LIB_GTK_DEV=libgtk2.0-dev 
 echo "detecting latest gtk version"
 apt-cache show libgtk-3-dev
 exit_code=$?
 if [ $exit_code = 0 ]; then
-    echo selecting gtk 3
-    GTK_VERSION=-3
+    echo adding gtk 3
+    LIB_GTK_DEV+=" libgtk-3-dev" 
 fi
 
 #checking for distrib tagged xserver-xorg
@@ -191,7 +208,22 @@ else
     GLFW_PKG=
 fi
 
-PACKAGES="make curl libjack-jackd2-0 libjack-jackd2-dev freeglut3-dev libasound2-dev libxmu-dev libxxf86vm-dev g++${CXX_VER} libgl1-mesa-dev${XTAG} libglu1-mesa-dev libraw1394-dev libudev-dev libdrm-dev libglew-dev libopenal-dev libsndfile1-dev libfreeimage-dev libcairo2-dev libfreetype6-dev libssl-dev libpulse-dev libusb-1.0-0-dev libgtk${GTK_VERSION}-dev  libopencv-dev libassimp-dev librtaudio-dev libboost-filesystem${BOOST_VER}-dev libgstreamer${GSTREAMER_VERSION}-dev libgstreamer-plugins-base${GSTREAMER_VERSION}-dev  ${GSTREAMER_FFMPEG} gstreamer${GSTREAMER_VERSION}-pulseaudio gstreamer${GSTREAMER_VERSION}-x gstreamer${GSTREAMER_VERSION}-plugins-bad gstreamer${GSTREAMER_VERSION}-alsa gstreamer${GSTREAMER_VERSION}-plugins-base gstreamer${GSTREAMER_VERSION}-plugins-good gdb ${GLFW_PKG} liburiparser-dev libcurl4-openssl-dev libpugixml-dev libgconf-2-4 libgtk2.0-0 libpoco-dev libxcursor-dev libxi-dev libxinerama-dev"
+
+PACKAGES="make nlohmann-json3-dev libssl3 libcurl4 brotli libcurl4-openssl-dev \
+libjack-jackd2-0 libjack-jackd2-dev freeglut3-dev libasound2-dev libxmu-dev \
+libxxf86vm-dev g++${CXX_VER} libgl1-mesa-dev${XTAG} libglu1-mesa-dev \
+libraw1394-dev libudev-dev libdrm-dev libglew-dev libopenal-dev libsndfile1-dev \
+libcairo2-dev libfreetype6-dev libssl-dev libpulse-dev \
+libusb-1.0-0-dev ${LIB_GTK_DEV} libopencv-dev liblapack-dev libblas-dev libassimp-dev librtaudio-dev \
+libgstreamer${GSTREAMER_VERSION}-dev libgstreamer-plugins-base${GSTREAMER_VERSION}-dev \
+${GSTREAMER_FFMPEG} gstreamer${GSTREAMER_VERSION}-pulseaudio \
+gstreamer${GSTREAMER_VERSION}-x gstreamer${GSTREAMER_VERSION}-plugins-bad \
+gstreamer${GSTREAMER_VERSION}-alsa gstreamer${GSTREAMER_VERSION}-plugins-base \
+gstreamer${GSTREAMER_VERSION}-plugins-good gdb ${GLFW_PKG} liburiparser-dev \
+libpugixml-dev libgtk2.0-0 libpoco-dev libxcursor-dev libxi-dev libxinerama-dev \
+libwayland-dev wayland-protocols libxkbcommon-dev libxkbcommon-x11-dev \
+libdecor-0-dev x11proto-dev libglvnd-dev libegl1-mesa-dev libgles2-mesa-dev \
+mesa-utils ccache"
 
 echo "installing OF dependencies"
 echo "OF needs to install the following packages using apt-get:"
@@ -210,13 +242,27 @@ fi
 #jammy needs libunwind-dev installed before gstreamer
 #and some additional packages
 if [ $MAJOR_VERSION -gt 21 ]; then
-installPackages "libunwind-dev"
+echo "Ensuring latest libunwind-dev is installed..."
+apt-get ${FORCE_YES} -qq install --only-upgrade libunwind-dev || installPackages libunwind-dev
 PACKAGES+=" libharfbuzz-dev"
 PACKAGES+=" gstreamer1.0-vaapi"
 PACKAGES+=" gstreamer1.0-libav"
 fi
 
+
+apt-get -y -qq install ${PACKAGES}
 installPackages ${PACKAGES}
+
+
+# Optional: gum (nicer of.sh interactive menu) — only if already in apt's repos.
+# Not in default Ubuntu/Debian repos as of writing; we don't add third-party
+# repos automatically. If you want it, see https://github.com/charmbracelet/gum#installation
+if apt-cache show gum &>/dev/null; then
+    echo "Package gum is available. Installing..."
+    installPackages gum
+else
+    echo "gum not found in configured apt repos - skipping (optional, used for of.sh's nicer interactive menu)"
+fi
 
 if [[ $MAJOR_VERSION -lt 18 ]]; then
     cp $ROOT/../extra/poco_config.mk $ROOT/../../../addons/ofxPoco/addon_config.mk
@@ -237,15 +283,15 @@ if [[ $MAJOR_VERSION -lt 14 || ($MAJOR_VERSION -eq 14 && $MINOR_VERSION -eq 4) ]
     sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++${CXX_VER} 1 --force
 fi
 
-# Update addon_config.mk files to use OpenCV 3 or 4 depending on what's installed
+# Update addon_config.mk files to use OpenCV 3, 4 or 5 depending on what's installed
 addons_dir="$(readlink -f "$ROOT/../../../addons")"
-$(pkg-config opencv4 --exists)
-exit_code=$?
-if [ $exit_code != 0 ]; then
-	echo "Updating ofxOpenCV to use openCV3"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv4(.*)$/ADDON_PKG_CONFIG_LIBRARIES =\1opencv\2/' "$addons_dir/ofxOpenCv/addon_config.mk"
-else
+if pkg-config opencv5 --exists; then
+	echo "Updating ofxOpenCV to use openCV5"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv5/' "$addons_dir/ofxOpenCv/addon_config.mk"
+elif pkg-config opencv4 --exists; then
 	echo "Updating ofxOpenCV to use openCV4"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv\s/ADDON_PKG_CONFIG_LIBRARIES =\1opencv4 /g' "$addons_dir/ofxOpenCv/addon_config.mk"
-	sed -i -E 's/ADDON_PKG_CONFIG_LIBRARIES =(.*)opencv$/ADDON_PKG_CONFIG_LIBRARIES =\1opencv4/g' "$addons_dir/ofxOpenCv/addon_config.mk"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv4/' "$addons_dir/ofxOpenCv/addon_config.mk"
+else
+	echo "Updating ofxOpenCV to use openCV3"
+	sed -i -E 's/(ADDON_PKG_CONFIG_LIBRARIES =.*)\bopencv[45]?\b/\1opencv/' "$addons_dir/ofxOpenCv/addon_config.mk"
 fi
